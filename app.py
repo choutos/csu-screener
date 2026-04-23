@@ -8,7 +8,7 @@ import streamlit as st
 from db import get_db, add_to_portfolio, add_to_watchlist, move_to_portfolio, move_to_watchlist, remove_from_watchlist, remove_from_portfolio, log_kill_signal, update_portfolio_status, upsert_scan
 from fetcher import fetch_company, score_company
 from smart_fetcher import fetch_company as smart_fetch, calculate_buy_under, get_data_source, is_ib_available
-from discovery import get_api_key, save_api_key, test_fmp_key, run_discovery, get_available_ticker_count, get_index_stats, refresh_index_cache, PRESETS
+from discovery import get_api_key, save_api_key, test_fmp_key, run_discovery, get_available_ticker_count, get_index_stats, refresh_index_cache, refresh_etf_holdings, PRESETS, INDEX_SOURCES, ETF_SOURCES, ibkr_scan
 import pandas as pd
 from datetime import datetime
 from pathlib import Path
@@ -374,29 +374,43 @@ elif page == "🧭 Discovery":
     st.subheader("Index Universe")
     idx_stats = get_index_stats()
     
+    # Group by region
+    regions = {"US": [], "Europe": [], "Asia/Pacific": [], "ETF": []}
+    region_map = {"US": "US", "UK": "Europe", "DE": "Europe", "FR": "Europe", "NL": "Europe", "ES": "Europe", "IT": "Europe", "CH": "Europe", "SE": "Europe", "JP": "Asia/Pacific", "AU": "Asia/Pacific", "EU": "ETF"}
+    
+    for key, s in idx_stats.items():
+        region = "ETF" if key.startswith("etf_") else region_map.get(s.get("region", "US"), "US")
+        regions[region].append((key, s))
+    
+    tab_us, tab_eu, tab_ap, tab_etf = st.tabs(["🇺🇸 US", "🇪🇺 Europe", "🌏 Asia/Pacific", "📦 ETFs"])
+    
     needs_refresh = any(not s["cache_exists"] for s in idx_stats.values())
     
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("S&P 500", f"{idx_stats['sp500']['cached']} tickers")
-    col2.metric("S&P 400", f"{idx_stats['sp400']['cached']} tickers")
-    col3.metric("S&P 600", f"{idx_stats['sp600']['cached']} tickers")
-    with col4:
-        st.write("")
-        if st.button("🔄 Refresh All", help="Re-download index constituents from Wikipedia"):
-            with st.spinner("Refreshing..."):
+    for tab, items in [(tab_us, regions["US"]), (tab_eu, regions["Europe"]), (tab_ap, regions["Asia/Pacific"]), (tab_etf, regions["ETF"])]:
+        with tab:
+            for key, s in items:
+                icon = "✅" if s["cached"] > 0 else "⬜"
+                st.write(f"{icon} **{s['label']}** — {s['cached']} tickers ({s['cap']}-cap)")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("🔄 Refresh Indexes", help="Re-download all index constituents from Wikipedia"):
+            with st.spinner("Refreshing indexes..."):
                 counts = refresh_index_cache()
-                ok = True
                 for k, v in counts.items():
                     if isinstance(v, str):
-                        st.error(f"{k.upper()}: {v}")
-                        ok = False
+                        st.error(f"{INDEX_SOURCES.get(k, {}).get('label', k)}: {v}")
                     else:
-                        st.success(f"{k.upper()}: {v} tickers")
-                if ok:
-                    st.rerun()
-    
-    if needs_refresh:
-        st.info("👆 Click Refresh to download the index tickers first.")
+                        st.success(f"{INDEX_SOURCES.get(k, {}).get('label', k)}: {v} tickers")
+    with col2:
+        if st.button("📦 Refresh ETFs", help="Fetch ETF holdings via yfinance"):
+            with st.spinner("Refreshing ETFs..."):
+                counts = refresh_etf_holdings()
+                for k, v in counts.items():
+                    if isinstance(v, str):
+                        st.warning(f"{k}: {v}")
+                    else:
+                        st.success(f"{k}: {v} holdings")
     
     st.markdown("---")
     
@@ -407,8 +421,11 @@ elif page == "🧭 Discovery":
         ("quality_compounders", "🏛️ Quality Compounders — High FCF, stable, durable"),
         ("deep_value", "💰 Deep Value — Cheap on FCF yield, profitable"),
         ("wide_moat", "🏰 Wide Moat — High margins, dominant"),
-        ("small_cap_quality", "🔭 Small Cap Quality — Under the radar"),
-        ("full_universe", "🌍 Full Universe — All large/mid/small caps (slow!)"),
+        ("small_cap_quality", "🔭 Small Cap Quality — US + EAFE small caps"),
+        ("europe_quality", "🇪🇺 Europe Quality — FTSE, DAX, CAC, IBEX, MIB..."),
+        ("europe_small_cap", "🇪🇺 Europe Small Cap — UK mid, MDAX, country ETFs"),
+        ("asia_pacific", "🌏 Asia-Pacific — Nikkei, ASX"),
+        ("full_universe", "🌍 Full Universe — All indexes (slow!)"),
     ]
     
     preset = st.selectbox("Scan Type", preset_options, format_func=lambda x: x[1])
