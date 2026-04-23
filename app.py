@@ -248,10 +248,12 @@ elif page == "👀 Watchlist":
                         st.write("**🎯 Buy Under:** Not set")
                 with col3:
                     if row["thesis"]:
-                        st.write(f"**Thesis:** {row['thesis'][:80]}{'...' if len(row['thesis'])>80 else ''}")
+                        with st.expander(f"📝 Thesis"):
+                            st.write(row["thesis"])
                 with col4:
                     if row["kill_signals"]:
-                        st.write(f"**Kill Signals:** {row['kill_signals'][:80]}{'...' if len(row['kill_signals'])>80 else ''}")
+                        with st.expander(f"⚠️ Kill Signals"):
+                            st.write(row["kill_signals"])
                 
                 # Actions
                 acol1, acol2, acol3, acol4, acol5 = st.columns(5)
