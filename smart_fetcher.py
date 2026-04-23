@@ -97,10 +97,12 @@ def fetch_company(ticker: str) -> Optional[dict]:
     """
     if is_ib_available():
         data = _fetch_from_ibkr(ticker)
-        if data:
+        # Only use IBKR data if it has meaningful content
+        # (IBKR returns partial data without paid subscriptions)
+        if data and data.get("price") and data.get("sector") and data.get("gross_margin") is not None:
             data["data_source"] = "ibkr"
             return data
-        # IBKR failed for this ticker, fall back
+        # IBKR gave partial data — fall back
     
     data = _fetch_from_yfinance(ticker)
     if data:
@@ -112,7 +114,8 @@ def fetch_companies_batch(tickers: list[str]) -> list[dict]:
     """Fetch multiple companies. Uses IBKR's batch capabilities when available."""
     if is_ib_available():
         results = _fetch_batch_ibkr(tickers)
-        if results:
+        # Only use IBKR if results have real data
+        if results and any(r.get("price") and r.get("gross_margin") is not None for r in results):
             for r in results:
                 r["data_source"] = "ibkr"
             return results
