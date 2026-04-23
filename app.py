@@ -7,6 +7,7 @@ Run: streamlit run app.py
 import streamlit as st
 from db import get_db, add_to_portfolio, add_to_watchlist, move_to_portfolio, move_to_watchlist, remove_from_watchlist, remove_from_portfolio, log_kill_signal, update_portfolio_status, upsert_scan
 from fetcher import fetch_company, score_company
+from smart_fetcher import fetch_company as smart_fetch, calculate_buy_under, get_data_source, is_ib_available
 from discovery import get_api_key, save_api_key, test_fmp_key, run_discovery, get_available_ticker_count, get_index_stats, refresh_index_cache, PRESETS
 import pandas as pd
 from datetime import datetime
@@ -17,6 +18,13 @@ st.set_page_config(page_title="Invest Process", page_icon="🎩", layout="wide")
 
 # ─── Sidebar ──────────────────────────────────────────────────────────────────
 page = st.sidebar.radio("📐 Dashboard", ["📊 Portfolio", "👀 Watchlist", "🔍 Scanner", "🧭 Discovery", "⚙️ Settings"])
+
+# Data source indicator
+source = get_data_source()
+source_emoji = "🏦" if source == "ibkr" else "📈"
+source_label = "IB Gateway" if source == "ibkr" else "yfinance"
+st.sidebar.caption(f"{source_emoji} Data: {source_label}")
+
 st.sidebar.markdown("---")
 st.sidebar.markdown("*Investment Process App*\n🎩")
 
@@ -221,12 +229,18 @@ elif page == "👀 Watchlist":
                 with acol2:
                     if st.button(f"🔄 Refresh Data", key=f"ref_{row['ticker']}"):
                         with st.spinner(f"Fetching {row['ticker']}..."):
-                            data = fetch_company(row["ticker"])
+                            data = smart_fetch(row["ticker"])
                             if data:
                                 scored = score_company(data)
                                 upsert_scan(conn, scored)
                                 conn.execute("UPDATE watchlist SET score=?, max_score=?, last_checked=datetime('now'), updated_at=datetime('now') WHERE ticker=?",
                                              (scored["total_score"], scored["max_score"], row["ticker"]))
+                                # Auto-calculate buy-under if not set
+                                if not row["buy_under"]:
+                                    bu = calculate_buy_under(row["ticker"], data)
+                                    if bu and bu.get("buy_under_per_share"):
+                                        conn.execute("UPDATE watchlist SET buy_under=?, updated_at=datetime('now') WHERE ticker=?",
+                                                     (bu["buy_under_per_share"], row["ticker"]))
                                 st.rerun()
                 with acol3:
                     if st.button(f"🗑️ Remove", key=f"wr_{row['ticker']}"):
@@ -262,18 +276,25 @@ elif page == "🔍 Scanner":
         
         for i, t in enumerate(tickers):
             with st.spinner(f"Fetching {t}..."):
-                data = fetch_company(t)
+                data = smart_fetch(t)
                 if data:
                     scored = score_company(data)
+                    # Add buy-under calculation
+                    bu = calculate_buy_under(t, data)
+                    if bu:
+                        scored["buy_under"] = bu.get("buy_under_per_share")
+                        scored["fair_value"] = bu.get("fair_value_per_share")
                     upsert_scan(conn, scored)
                     results.append(scored)
             progress.progress((i + 1) / len(tickers))
         
         if results:
-            st.success(f"Scanned {len(results)} companies")
+            st.success(f"Scanned {len(results)} companies via {get_data_source().upper()}")
             for r in sorted(results, key=lambda x: x.get("total_score", 0), reverse=True):
                 fit_emoji = {"STRONG": "🟢", "MODERATE": "🟡", "WEAK": "🟠", "NOT FIT": "🔴"}.get(r.get("csu_fit"), "⚪")
-                st.write(f"{fit_emoji} **{r['ticker']}** — {r['name']} | Score: {r.get('total_score',0)}/{r.get('max_score','?')} | {r.get('csu_fit','?')}")
+                buy_str = f" | 💰 Buy Under: ${r.get('buy_under', 'N/A')}" if r.get('buy_under') else ""
+                fv_str = f" | Fair: ${r.get('fair_value', 'N/A')}" if r.get('fair_value') else ""
+                st.write(f"{fit_emoji} **{r['ticker']}** — {r['name']} | Score: {r.get('total_score',0)}/{r.get('max_score','?')} | {r.get('csu_fit','?')}{buy_str}{fv_str}")
     
     st.markdown("---")
     
