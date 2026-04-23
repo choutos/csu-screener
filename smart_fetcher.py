@@ -98,8 +98,12 @@ def fetch_company(ticker: str) -> Optional[dict]:
     if is_ib_available():
         data = _fetch_from_ibkr(ticker)
         # Only use IBKR data if it has meaningful content
-        # (IBKR returns partial data without paid subscriptions)
-        if data and data.get("price") and data.get("sector") and data.get("gross_margin") is not None:
+        # IBKR returns partial data without paid subscriptions
+        # (no fundamentals, delayed/no market data)
+        price = data.get("price") if data else None
+        has_price = price is not None and str(price) != 'nan' and price > 0
+        has_fundamentals = data.get("gross_margin") is not None if data else False
+        if data and has_price and has_fundamentals:
             data["data_source"] = "ibkr"
             return data
         # IBKR gave partial data — fall back
