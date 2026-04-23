@@ -70,9 +70,13 @@ def _call_llm(system_prompt: str, user_prompt: str, config: dict = None) -> Opti
                 {"role": "user", "content": user_prompt},
             ],
             temperature=0.3,
-            max_tokens=800,
+            max_tokens=2000,
         )
-        return response.choices[0].message.content.strip()
+        content = response.choices[0].message.content.strip()
+        if not content:
+            logger.warning(f"LLM returned empty content for model {cfg['model']}")
+            return None
+        return content
     except Exception as e:
         logger.error(f"LLM call failed: {e}")
         return None
@@ -298,6 +302,7 @@ def check_portfolio_health(data: dict, thesis: str, kill_signals: str, config: d
     user_prompt = HEALTH_USER_PROMPT.format(**fmt)
     raw = _call_llm(HEALTH_SYSTEM_PROMPT, user_prompt, cfg)
     if not raw:
+        logger.warning(f"check_portfolio_health: _call_llm returned None for {data.get('ticker', '?')}")
         return None
     
     # Parse — handles nested JSON (kill_signals_triggered contains objects)
@@ -330,7 +335,17 @@ def check_portfolio_health(data: dict, thesis: str, kill_signals: str, config: d
                         continue
         if parsed is None:
             logger.warning(f"Could not parse health check response: {raw[:200]}")
-            return None
+            # Return a fallback with raw text so the user sees something
+            return {
+                "thesis_status": "UNKNOWN",
+                "thesis_assessment": f"Could not parse LLM response. Raw: {raw[:300]}",
+                "kill_signals_triggered": [],
+                "new_risks": [],
+                "overall_action": "WATCH",
+                "confidence": 0.0,
+                "summary": f"Parse failed. Raw LLM output (first 300 chars): {raw[:300]}",
+                "_raw": raw,
+            }
     
     # Validate required fields
     result = {

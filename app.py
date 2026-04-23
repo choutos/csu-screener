@@ -193,7 +193,7 @@ if page == "📊 Portfolio":
                                 conn.execute("UPDATE portfolio SET last_kill_check=datetime('now'), updated_at=datetime('now') WHERE ticker=?", (row["ticker"]))
                                 conn.commit()
                             else:
-                                st.error("LLM health check failed. Check Settings → LLM Advisor.")
+                                st.error(f"Health check LLM returned no result for {row['ticker']}. Check LLM Settings.")
                         else:
                             st.warning(f"Could not fetch data for {row['ticker']}")
                 
