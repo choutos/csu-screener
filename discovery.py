@@ -1,28 +1,24 @@
 """
-Investment Process App — FMP Discovery Engine
-Uses Financial Modeling Prep API to auto-discover quality companies.
-Falls back to yfinance for detailed scoring.
+Investment Process App — Discovery Engine
+Auto-discovers quality companies using multiple free sources.
 
-FMP Free Tier includes:
-- /stable/stock-list (all stocks)
-- /stable/profile (company profiles)
-- /stable/income-statement (financials)
-- /stable/key-metrics (ratios)
+Sources:
+1. yfinance index constituents (S&P 500, S&P 400, S&P 600, Russell 2000)
+2. Financial Modeling Prep API (free or paid — optional)
+3. Manual ticker entry (always available)
 
-Stock screener (/api/v3/stock-screener) requires Starter plan ($14/mo).
-This module works with BOTH free and paid tiers.
+No API key required for basic discovery.
 """
 import requests
 from db import get_db, upsert_scan
-from fetcher import score_company
+from fetcher import fetch_company, score_company
 from datetime import datetime
+import json
+from pathlib import Path
 
-STABLE_URL = "https://financialmodelingprep.com/stable"
-V3_URL = "https://financialmodelingprep.com/api/v3"
-
+# ─── API Key Management (FMP — optional) ──────────────────────────────────────
 
 def get_api_key() -> str | None:
-    """Load API key from config file."""
     from pathlib import Path
     key_file = Path(__file__).parent / "fmp_api_key.txt"
     if key_file.exists():
@@ -32,348 +28,221 @@ def get_api_key() -> str | None:
 
 
 def save_api_key(key: str):
-    from pathlib import Path
     (Path(__file__).parent / "fmp_api_key.txt").write_text(key.strip())
 
 
-def test_api_key(key: str) -> tuple[bool, str]:
-    """Test if an API key works. Returns (success, message)."""
+def test_fmp_key(key: str) -> tuple[bool, str]:
+    """Test FMP API key."""
     try:
-        r = requests.get(f"{STABLE_URL}/stock-list", params={
+        r = requests.get("https://financialmodelingprep.com/api/v3/profile/AAPL", params={
             "apikey": key,
-            "limit": 1,
         }, timeout=10)
         if r.status_code == 200:
-            data = r.json()
-            if isinstance(data, list) or (isinstance(data, dict) and "Error Message" not in data):
-                return True, "✅ API key works!"
-            else:
-                return False, f"❌ API returned: {data}"
+            return True, "✅ FMP key works!"
         elif r.status_code == 403:
-            return False, "❌ Invalid API key"
+            return False, "❌ Invalid FMP key"
+        elif r.status_code == 402:
+            return False, "❌ FMP: Payment required (free tier limited)"
         else:
-            return False, f"❌ HTTP {r.status_code}"
+            return False, f"❌ FMP: HTTP {r.status_code}"
     except Exception as e:
         return False, f"❌ Connection error: {e}"
 
 
-def check_plan(key: str) -> str:
-    """Detect if the API key has screener access (Starter+ plan)."""
+# ─── Index Constituents (Free — No API Key) ───────────────────────────────────
+
+def get_sp500_tickers() -> list[str]:
+    """Get S&P 500 tickers from Wikipedia."""
     try:
-        r = requests.get(f"{V3_URL}/stock-screener", params={
-            "apikey": key,
-            "marketCapMoreThan": 1000000000,
-            "limit": 1,
-        }, timeout=10)
-        if r.status_code == 200:
-            return "starter"
-        else:
-            return "free"
+        import pandas as pd
+        tables = pd.read_html("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies")
+        df = tables[0]
+        return df["Symbol"].str.replace(".", "-").tolist()
     except Exception:
-        return "free"
+        # Fallback hardcoded list
+        return _get_cached_tickers("sp500")
 
 
-# ─── Free Tier Discovery ─────────────────────────────────────────────────────
-
-def get_stock_list(key: str, exchange: str = None, limit: int = 5000) -> list[dict]:
-    """Get list of all stocks from FMP (free tier)."""
-    params = {"apikey": key, "limit": limit}
-    if exchange:
-        params["exchange"] = exchange
+def get_sp400_tickers() -> list[str]:
+    """Get S&P 400 mid-cap tickers from Wikipedia."""
     try:
-        r = requests.get(f"{STABLE_URL}/stock-list", params=params, timeout=30)
-        r.raise_for_status()
-        return r.json()
-    except Exception as e:
-        return {"error": str(e)}
-
-
-def get_company_profile(key: str, ticker: str) -> dict | None:
-    """Get company profile (free tier)."""
-    try:
-        r = requests.get(f"{STABLE_URL}/profile", params={
-            "apikey": key,
-            "symbol": ticker,
-        }, timeout=10)
-        r.raise_for_status()
-        data = r.json()
-        return data[0] if isinstance(data, list) and data else data
+        import pandas as pd
+        tables = pd.read_html("https://en.wikipedia.org/wiki/List_of_S%26P_400_companies")
+        df = tables[0]
+        return df["Symbol"].str.replace(".", "-").tolist()
     except Exception:
-        return None
+        return _get_cached_tickers("sp400")
 
 
-def get_key_metrics(key: str, ticker: str) -> dict | None:
-    """Get key financial metrics (free tier)."""
+def get_sp600_tickers() -> list[str]:
+    """Get S&P 600 small-cap tickers from Wikipedia."""
     try:
-        r = requests.get(f"{STABLE_URL}/key-metrics", params={
-            "apikey": key,
-            "symbol": ticker,
-            "limit": 1,
-        }, timeout=10)
-        r.raise_for_status()
-        data = r.json()
-        return data[0] if isinstance(data, list) and data else data
+        import pandas as pd
+        tables = pd.read_html("https://en.wikipedia.org/wiki/List_of_S%26P_600_companies")
+        df = tables[0]
+        return df["Symbol"].str.replace(".", "-").tolist()
     except Exception:
-        return None
+        return _get_cached_tickers("sp600")
 
 
-def get_income_statement(key: str, ticker: str) -> dict | None:
-    """Get latest income statement (free tier)."""
-    try:
-        r = requests.get(f"{STABLE_URL}/income-statement", params={
-            "apikey": key,
-            "symbol": ticker,
-            "limit": 1,
-        }, timeout=10)
-        r.raise_for_status()
-        data = r.json()
-        return data[0] if isinstance(data, list) and data else data
-    except Exception:
-        return None
+def _get_cached_tickers(index: str) -> list[str]:
+    """Load cached tickers from file."""
+    cache = Path(__file__).parent / "data" / f"{index}_tickers.json"
+    if cache.exists():
+        return json.loads(cache.read_text())
+    return []
 
 
-def get_cash_flow(key: str, ticker: str) -> dict | None:
-    """Get latest cash flow statement (free tier)."""
-    try:
-        r = requests.get(f"{STABLE_URL}/cash-flow-statement", params={
-            "apikey": key,
-            "symbol": ticker,
-            "limit": 1,
-        }, timeout=10)
-        r.raise_for_status()
-        data = r.json()
-        return data[0] if isinstance(data, list) and data else data
-    except Exception:
-        return None
+def _save_cached_tickers(index: str, tickers: list[str]):
+    """Save tickers to cache file."""
+    cache = Path(__file__).parent / "data" / f"{index}_tickers.json"
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    cache.write_text(json.dumps(tickers))
 
 
-# ─── Paid Tier Discovery (Starter+) ──────────────────────────────────────────
-
-def discover_stocks_screener(api_key: str, min_market_cap: int = 200_000_000,
-                             max_market_cap: int = 50_000_000_000,
-                             min_fcf_margin: float = 0.05,
-                             min_gross_margin: float = 0.30,
-                             min_roe: float = 0.10,
-                             sector: str = None,
-                             exchange: str = None,
-                             limit: int = 50) -> list[dict]:
-    """Use FMP Stock Screener (requires Starter plan)."""
-    params = {
-        "apikey": api_key,
-        "marketCapMoreThan": min_market_cap,
-        "marketCapLessThan": max_market_cap,
-        "limit": limit,
-    }
-    
-    if min_fcf_margin > 0:
-        params["freeCashFlowMarginMoreThan"] = round(min_fcf_margin * 100, 1)
-    if min_gross_margin > 0:
-        params["grossMarginMoreThan"] = round(min_gross_margin * 100, 1)
-    if min_roe > 0:
-        params["roeMoreThan"] = round(min_roe * 100, 1)
-    if sector:
-        params["sector"] = sector
-    if exchange:
-        params["exchange"] = exchange
-    
-    try:
-        r = requests.get(f"{V3_URL}/stock-screener", params=params, timeout=30)
-        r.raise_for_status()
-        return r.json()
-    except Exception as e:
-        return {"error": str(e)}
+def refresh_index_cache() -> dict[str, int]:
+    """Refresh all index caches. Returns {index: count}."""
+    results = {}
+    for name, fn in [("sp500", get_sp500_tickers), ("sp400", get_sp400_tickers), ("sp600", get_sp600_tickers)]:
+        tickers = fn()
+        if tickers:
+            _save_cached_tickers(name, tickers)
+            results[name] = len(tickers)
+    return results
 
 
-# ─── Hybrid Discovery (works on free tier) ────────────────────────────────────
+# ─── Discovery Scans ──────────────────────────────────────────────────────────
 
-def discover_free_tier(api_key: str, exchange: str = None,
-                       sector_filter: list[str] = None,
-                       min_market_cap: int = 500_000_000) -> list[dict]:
+PRESETS = {
+    "quality_compounders": {
+        "description": "High FCF, stable, durable businesses",
+        "indices": ["sp500", "sp400"],
+        "min_fcf_margin": 0.10,
+        "min_gross_margin": 0.40,
+        "min_market_cap_m": 500,
+    },
+    "deep_value": {
+        "description": "Cheap on FCF yield, profitable",
+        "indices": ["sp400", "sp600"],
+        "min_fcf_margin": 0.08,
+        "min_gross_margin": 0.30,
+        "min_market_cap_m": 200,
+    },
+    "wide_moat": {
+        "description": "High margins, dominant businesses",
+        "indices": ["sp500"],
+        "min_fcf_margin": 0.15,
+        "min_gross_margin": 0.60,
+        "min_market_cap_m": 1000,
+    },
+    "small_cap_quality": {
+        "description": "Quality under the radar",
+        "indices": ["sp600", "sp400"],
+        "min_fcf_margin": 0.08,
+        "min_gross_margin": 0.35,
+        "min_market_cap_m": 200,
+    },
+    "full_universe": {
+        "description": "All US large/mid/small caps (slow!)",
+        "indices": ["sp500", "sp400", "sp600"],
+        "min_fcf_margin": 0.05,
+        "min_gross_margin": 0.25,
+        "min_market_cap_m": 100,
+    },
+}
+
+
+def run_discovery(preset: str = "quality_compounders", 
+                  batch_size: int = 20,
+                  progress_callback=None) -> list[dict]:
     """
-    Two-step discovery for free tier:
-    1. Get stock list (free)
-    2. Filter by market cap + sector
-    3. Enrich top candidates with profiles + metrics
+    Run a discovery scan using yfinance index constituents.
+    No API key needed. Slower but truly free.
     
-    Returns list of scored companies.
+    Args:
+        preset: Scan preset name
+        batch_size: How many tickers to fetch per run (avoid rate limits)
+        progress_callback: Optional fn(current, total, ticker) for progress updates
+    
+    Returns:
+        List of scored company dicts
     """
-    # Step 1: Get stock list
-    stocks = get_stock_list(api_key, exchange=exchange)
-    if isinstance(stocks, dict) and "error" in stocks:
-        return stocks
+    p = PRESETS.get(preset, PRESETS["quality_compounders"])
     
-    # Step 2: Filter
-    filtered = []
-    for s in stocks:
-        mcap = s.get("marketCap", 0) or 0
-        if mcap >= min_market_cap:
-            if sector_filter:
-                sec = (s.get("sector") or "").lower()
-                if not any(sf.lower() in sec for sf in sector_filter):
-                    continue
-            filtered.append(s)
+    # Gather tickers from indices
+    all_tickers = []
+    for idx_name in p["indices"]:
+        tickers = _get_cached_tickers(idx_name)
+        if not tickers:
+            # Try fetching fresh
+            fn_map = {"sp500": get_sp500_tickers, "sp400": get_sp400_tickers, "sp600": get_sp600_tickers}
+            fn = fn_map.get(idx_name)
+            if fn:
+                tickers = fn()
+                if tickers:
+                    _save_cached_tickers(idx_name, tickers)
+        all_tickers.extend(tickers)
     
-    # Sort by market cap descending, take top N
-    filtered.sort(key=lambda x: x.get("marketCap", 0) or 0, reverse=True)
-    candidates = filtered[:100]  # Process top 100
+    # Deduplicate
+    seen = set()
+    unique = []
+    for t in all_tickers:
+        if t not in seen:
+            seen.add(t)
+            unique.append(t)
     
-    # Step 3: Enrich with financial data
+    # Limit batch
+    to_scan = unique[:batch_size]
+    
     results = []
-    for stock in candidates:
-        ticker = stock.get("symbol", "")
-        if not ticker:
+    for i, ticker in enumerate(to_scan):
+        if progress_callback:
+            progress_callback(i, len(to_scan), ticker)
+        
+        data = fetch_company(ticker)
+        if not data:
             continue
         
-        # Get profile for sector/industry
-        profile = get_company_profile(api_key, ticker)
+        # Pre-filter: skip if doesn't meet minimum criteria
+        gm = data.get("gross_margin", 0) or 0
+        fm = data.get("fcf_margin") or 0
+        mc = data.get("market_cap_m", 0) or 0
         
-        # Get key metrics for margins
-        metrics = get_key_metrics(api_key, ticker)
+        if gm < p["min_gross_margin"]:
+            continue
+        if fm < p["min_fcf_margin"]:
+            continue
+        if mc < p["min_market_cap_m"]:
+            continue
         
-        # Build data dict
-        data = {
-            "ticker": ticker,
-            "name": stock.get("name") or (profile.get("companyName") if profile else ""),
-            "sector": (profile.get("sector") if profile else "") or stock.get("sector", ""),
-            "industry": (profile.get("industry") if profile else "") or stock.get("industry", ""),
-            "market_cap_m": round((stock.get("marketCap", 0) or 0) / 1e6, 1),
-            "price": stock.get("price"),
-            "currency": "USD",
-            "gross_margin": None,
-            "fcf_margin": None,
-            "fcf_yield": None,
-            "debt_to_equity": None,
-            "revenue_growth_3y": None,
-            "revenue_volatility": None,
-        }
-        
-        if profile:
-            data["gross_margin"] = round(profile.get("grossMargin", 0) or 0, 3) if profile.get("grossMargin") else None
-        
-        if metrics:
-            if metrics.get("freeCashFlowPerShare") and metrics.get("revenuePerShare"):
-                data["fcf_margin"] = round(metrics["freeCashFlowPerShare"] / metrics["revenuePerShare"], 3) if metrics["revenuePerShare"] else None
-            if metrics.get("debtToEquity"):
-                data["debt_to_equity"] = round(metrics["debtToEquity"], 2)
-            if metrics.get("revenueGrowth"):
-                data["revenue_growth_3y"] = round(metrics["revenueGrowth"], 3)
-        
-        # Calculate FCF yield
-        mcap = data["market_cap_m"] * 1e6 if data["market_cap_m"] else 0
-        if data["fcf_margin"] and data.get("price") and mcap > 0:
-            # Approximate: FCF = fcf_margin * (price / price_per_share) * shares
-            # Simpler: use FCF yield from metrics if available
-            pass
-        
-        # Score it
         scored = score_company(data)
-        results.append(scored)
+        
+        # Only keep moderate or better
+        if scored.get("total_score", 0) >= 12:
+            results.append(scored)
     
     results.sort(key=lambda x: x.get("total_score", 0), reverse=True)
     return results
 
 
-# ─── Unified Discovery Entry Point ───────────────────────────────────────────
+def get_available_ticker_count(preset: str) -> int:
+    """Get how many tickers are available for a preset."""
+    p = PRESETS.get(preset, PRESETS["quality_compounders"])
+    total = 0
+    for idx_name in p["indices"]:
+        tickers = _get_cached_tickers(idx_name)
+        total += len(tickers)
+    return total
 
-def run_discovery(api_key: str, preset: str = "quality_compounders",
-                  exchange: str = None, sector: str = None) -> list[dict]:
-    """
-    Run discovery scan. Auto-detects free vs paid tier.
-    """
-    presets = {
-        "quality_compounders": {
-            "description": "High FCF, stable, durable businesses",
-            "min_market_cap": 500_000_000,
-            "max_market_cap": 50_000_000_000,
-            "min_fcf_margin": 0.10,
-            "min_gross_margin": 0.40,
-            "min_roe": 0.12,
-        },
-        "deep_value": {
-            "description": "Cheap on FCF yield, profitable",
-            "min_market_cap": 200_000_000,
-            "max_market_cap": 10_000_000_000,
-            "min_fcf_margin": 0.08,
-            "min_gross_margin": 0.30,
-            "min_roe": 0.08,
-        },
-        "wide_moat": {
-            "description": "High margins, dominant businesses",
-            "min_market_cap": 1_000_000_000,
-            "max_market_cap": 100_000_000_000,
-            "min_fcf_margin": 0.15,
-            "min_gross_margin": 0.60,
-            "min_roe": 0.15,
-        },
-        "small_cap_quality": {
-            "description": "Quality under the radar",
-            "min_market_cap": 200_000_000,
-            "max_market_cap": 3_000_000_000,
-            "min_fcf_margin": 0.08,
-            "min_gross_margin": 0.35,
-            "min_roe": 0.10,
-        },
-        "european_quality": {
-            "description": "Quality compounders in Europe",
-            "min_market_cap": 500_000_000,
-            "max_market_cap": 30_000_000_000,
-            "min_fcf_margin": 0.08,
-            "min_gross_margin": 0.35,
-            "min_roe": 0.10,
-        },
-    }
-    
-    p = presets.get(preset, presets["quality_compounders"])
-    
-    # Try paid tier first (screener)
-    plan = check_plan(api_key)
-    
-    if plan == "starter":
-        results = discover_stocks_screener(
-            api_key,
-            min_market_cap=p["min_market_cap"],
-            max_market_cap=p["max_market_cap"],
-            min_fcf_margin=p["min_fcf_margin"],
-            min_gross_margin=p["min_gross_margin"],
-            min_roe=p["min_roe"],
-            sector=sector,
-            exchange=exchange,
-        )
-        
-        if isinstance(results, dict) and "error" in results:
-            return results
-        
-        # Score results
-        enriched = []
-        for stock in results:
-            data = {
-                "ticker": stock.get("symbol", ""),
-                "name": stock.get("companyName", ""),
-                "sector": stock.get("sector", ""),
-                "industry": stock.get("industry", ""),
-                "market_cap_m": round(stock.get("marketCap", 0) / 1e6, 1) if stock.get("marketCap") else None,
-                "price": stock.get("price"),
-                "currency": "USD",
-                "gross_margin": round(stock.get("grossMargin", 0) or 0, 3),
-                "fcf_margin": round(stock.get("freeCashFlowMargin", 0) or 0, 3),
-                "fcf_yield": None,
-                "debt_to_equity": round(stock.get("debtEquity", 0) or 0, 2),
-                "revenue_growth_3y": round(stock.get("revenueGrowth5Years", 0) or 0, 3),
-                "revenue_volatility": None,
-            }
-            enriched.append(score_company(data))
-        
-        enriched.sort(key=lambda x: x.get("total_score", 0), reverse=True)
-        return enriched
-    
-    else:
-        # Free tier: two-step approach
-        ex = exchange if exchange and exchange != "Any" else None
-        sector_list = [sector] if sector else None
-        results = discover_free_tier(api_key, exchange=ex, sector_filter=sector_list,
-                                     min_market_cap=p["min_market_cap"])
-        
-        if isinstance(results, dict) and "error" in results:
-            return results
-        
-        return results
+
+def get_index_stats() -> dict:
+    """Get stats about cached index data."""
+    stats = {}
+    for idx in ["sp500", "sp400", "sp600"]:
+        tickers = _get_cached_tickers(idx)
+        cache_file = Path(__file__).parent / "data" / f"{idx}_tickers.json"
+        stats[idx] = {
+            "cached": len(tickers),
+            "cache_exists": cache_file.exists(),
+        }
+    return stats

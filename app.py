@@ -7,7 +7,7 @@ Run: streamlit run app.py
 import streamlit as st
 from db import get_db, add_to_portfolio, add_to_watchlist, move_to_portfolio, move_to_watchlist, remove_from_watchlist, remove_from_portfolio, log_kill_signal, update_portfolio_status, upsert_scan
 from fetcher import fetch_company, score_company
-from discovery import get_api_key, save_api_key, test_api_key, check_plan, run_discovery, discover_stocks_screener
+from discovery import get_api_key, save_api_key, test_fmp_key, run_discovery, get_available_ticker_count, get_index_stats, refresh_index_cache, PRESETS
 import pandas as pd
 from datetime import datetime
 from pathlib import Path
@@ -345,179 +345,147 @@ elif page == "🔍 Scanner":
 # ─── Discovery Dashboard ──────────────────────────────────────────────────────
 elif page == "🧭 Discovery":
     st.title("🧭 Discovery")
-    st.caption("Auto-discover quality companies using Financial Modeling Prep API. Not limited to software.")
+    st.caption("Auto-discover quality companies from index constituents. No API key needed — uses Wikipedia + yfinance.")
     
     conn = get_db()
     
-    # API Key management
-    api_key = get_api_key()
+    # ── Index Cache Status ──
+    st.subheader("Index Universe")
+    idx_stats = get_index_stats()
     
-    with st.expander("🔑 API Configuration", expanded=not api_key):
-        st.markdown("""
-        **Financial Modeling Prep API** — works with both free and paid plans.
-        
-        - **Free plan:** 250 requests/day. Uses stock list + profile for discovery.
-        - **Starter plan** ($14/mo): Full stock screener with advanced filters.
-        
-        Get your key at: https://site.financialmodelingprep.com/register
-        """)
-        
-        current_key = st.text_input("API Key", value=api_key or "", type="password")
-        
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            if st.button("💾 Save Key") and current_key:
-                save_api_key(current_key)
-                api_key = current_key
-                st.success("API key saved!")
-        with col2:
-            if st.button("🧪 Test Key") and current_key:
-                with st.spinner("Testing..."):
-                    ok, msg = test_api_key(current_key)
-                    if ok:
-                        st.success(msg)
-                    else:
-                        st.error(msg)
-        with col3:
-            if st.button("🔍 Check Plan") and current_key:
-                with st.spinner("Checking..."):
-                    plan = check_plan(current_key)
-                    plan_name = "Starter+ (full screener)" if plan == "starter" else "Free (limited)"
-                    st.info(f"Plan: {plan_name}")
+    needs_refresh = any(not s["cache_exists"] for s in idx_stats.values())
     
-    if not api_key:
-        st.warning("Configure your FMP API key above to start discovering companies.")
-        conn.close()
-    else:
-        st.markdown("---")
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("S&P 500", f"{idx_stats['sp500']['cached']} tickers")
+    col2.metric("S&P 400", f"{idx_stats['sp400']['cached']} tickers")
+    col3.metric("S&P 600", f"{idx_stats['sp600']['cached']} tickers")
+    with col4:
+        st.write("")
+        if st.button("🔄 Refresh All", help="Re-download index constituents from Wikipedia"):
+            with st.spinner("Refreshing..."):
+                counts = refresh_index_cache()
+                st.success(f"Updated: {', '.join(f'{k}={v}' for k,v in counts.items())}")
+                st.rerun()
+    
+    if needs_refresh:
+        st.info("👆 Click Refresh to download the index tickers first.")
+    
+    st.markdown("---")
+    
+    # ── Preset Scans ──
+    st.subheader("Discovery Scans")
+    
+    preset_options = [
+        ("quality_compounders", "🏛️ Quality Compounders — High FCF, stable, durable"),
+        ("deep_value", "💰 Deep Value — Cheap on FCF yield, profitable"),
+        ("wide_moat", "🏰 Wide Moat — High margins, dominant"),
+        ("small_cap_quality", "🔭 Small Cap Quality — Under the radar"),
+        ("full_universe", "🌍 Full Universe — All large/mid/small caps (slow!)"),
+    ]
+    
+    preset = st.selectbox("Scan Type", preset_options, format_func=lambda x: x[1])
+    preset_key = preset[0]
+    
+    batch_size = st.slider(
+        "Tickers to scan",
+        min_value=10, max_value=100, value=20, step=10,
+        help="How many tickers to fetch per scan. More = slower but more results."
+    )
+    
+    available = get_available_ticker_count(preset_key)
+    st.caption(f"Available universe: {available} tickers | Scanning {min(batch_size, available)}")
+    
+    if st.button("🚀 Run Discovery Scan", type="primary", disabled=available==0):
+        progress = st.progress(0, text="Starting scan...")
+        results = []
         
-        # Preset scans
-        st.subheader("Preset Scans")
+        def on_progress(current, total, ticker):
+            pct = int((current + 1) / total * 100)
+            progress.progress(pct, text=f"Scanning {ticker}... ({current+1}/{total})")
         
-        preset = st.selectbox("Scan Type", [
-            ("quality_compounders", "🏛️ Quality Compounders — High FCF, stable, durable"),
-            ("deep_value", "💰 Deep Value — Cheap on FCF yield, profitable"),
-            ("wide_moat", "🏰 Wide Moat — High margins, dominant businesses"),
-            ("small_cap_quality", "🔭 Small Cap Quality — Under the radar"),
-            ("european_quality", "🇪🇺 European Quality — Quality compounders in Europe"),
-        ], format_func=lambda x: x[1])
+        try:
+            results = run_discovery(preset=preset_key, batch_size=batch_size, progress_callback=on_progress)
+        except Exception as e:
+            st.error(f"Scan error: {e}")
+            results = []
         
-        preset_key = preset[0]
+        progress.empty()
         
-        col1, col2 = st.columns([3, 1])
-        with col1:
-            exchange = st.selectbox("Exchange Filter", ["Any", "NYSE", "NASDAQ", "LSE", "EURONEXT", "XETRA", "TSX"], index=0)
-        with col2:
-            st.write("")  # spacer
-        
-        if st.button("🚀 Run Discovery Scan", type="primary"):
-            with st.spinner("Scanning universe via FMP..."):
-                ex = None if exchange == "Any" else exchange
-                results = run_discovery(api_key, preset=preset_key, exchange=ex)
-                
-                if isinstance(results, dict) and "error" in results:
-                    st.error(f"Scan failed: {results['error']}")
-                elif not results:
-                    st.info("No companies matched the criteria. Try relaxing filters.")
-                else:
-                    st.success(f"Found {len(results)} companies!")
-                    
-                    # Save to scan_results
-                    for r in results:
-                        upsert_scan(conn, r)
-                    conn.commit()
-                    
-                    # Display results
-                    for r in results:
-                        fit = r.get("csu_fit", "?")
-                        fit_emoji = {"STRONG": "🟢", "MODERATE": "🟡", "WEAK": "🟠", "NOT FIT": "🔴"}.get(fit, "⚪")
-                        score = r.get("total_score", 0)
-                        max_score = r.get("max_score", "?")
-                        
-                        # Check if already in portfolio/watchlist
-                        in_p = conn.execute("SELECT 1 FROM portfolio WHERE ticker=?", (r['ticker'],)).fetchone()
-                        in_w = conn.execute("SELECT 1 FROM watchlist WHERE ticker=?", (r['ticker'],)).fetchone()
-                        status_badge = ""
-                        if in_p:
-                            status_badge = " 📊 OWN"
-                        elif in_w:
-                            status_badge = " 👀 TRACKING"
-                        
-                        with st.container(border=True):
-                            hcol, scol, acol = st.columns([3, 1, 1])
-                            with hcol:
-                                st.write(f"{fit_emoji} **{r['ticker']}** — {r.get('name', '?')}{status_badge}")
-                                st.caption(f"{r.get('sector', '?')} / {r.get('industry', '?')} | MCap: ${r.get('market_cap_m', 0):,.0f}M")
-                            with scol:
-                                st.write(f"**{score}/{max_score}** | {fit}")
-                            with acol:
-                                if not in_p and not in_w:
-                                    if st.button(f"👀 Watch", key=f"disc_w_{r['ticker']}"):
-                                        add_to_watchlist(conn, r['ticker'], r.get('name', ''),
-                                                        score=score, max_score=max_score, source=f"fmp_{preset_key}",
-                                                        sector=r.get('sector', ''), industry=r.get('industry', ''))
-                                        conn.commit()
-                                        st.success(f"Added {r['ticker']} to watchlist!")
-                                        st.rerun()
-                            
-                            # Key metrics
-                            metrics = []
-                            for key, label, fmt in [
-                                ("gross_margin", "Gross M", ".0%"),
-                                ("fcf_margin", "FCF M", ".0%"),
-                                ("fcf_yield", "FCF Y", ".1%"),
-                                ("revenue_growth_3y", "Rev Gr", ".0%"),
-                                ("debt_to_equity", "D/E", ".2f"),
-                            ]:
-                                v = r.get(key)
-                                if v is not None:
-                                    try:
-                                        metrics.append(f"{label}: {v:{fmt}}")
-                                    except (ValueError, TypeError):
-                                        metrics.append(f"{label}: {v}")
-                            if metrics:
-                                st.caption(" | ".join(metrics))
-        
-        st.markdown("---")
-        
-        # Custom screener
-        st.subheader("Custom Screener")
-        st.caption("Set your own filters for the FMP stock screener")
-        
-        with st.form("custom_screener"):
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                cs_min_mcap = st.number_input("Min Market Cap ($M)", value=500, step=100)
-                cs_max_mcap = st.number_input("Max Market Cap ($M)", value=50000, step=1000)
-            with col2:
-                cs_min_fcf = st.number_input("Min FCF Margin (%)", value=8.0, step=1.0)
-                cs_min_gm = st.number_input("Min Gross Margin (%)", value=40.0, step=5.0)
-            with col3:
-                cs_min_roe = st.number_input("Min ROE (%)", value=10.0, step=1.0)
-                cs_limit = st.number_input("Max Results", value=50, step=10, min_value=5, max_value=200)
+        if not results:
+            st.info("No companies passed the filters. Try relaxing criteria or scanning more tickers.")
+        else:
+            st.success(f"Found {len(results)} quality companies!")
             
-            if st.form_submit_button("🔍 Run Custom Scan"):
-                with st.spinner("Scanning..."):
-                    results = run_discovery_scan(api_key, preset="quality_compounders")
-                    # Override with custom params
-                    from discovery import discover_stocks_screener
-                    results_raw = discover_stocks_screener(
-                        api_key,
-                        min_market_cap=int(cs_min_mcap * 1e6),
-                        max_market_cap=int(cs_max_mcap * 1e6),
-                        min_fcf_margin=cs_min_fcf / 100,
-                        min_gross_margin=cs_min_gm / 100,
-                        min_roe=cs_min_roe / 100,
-                        limit=cs_limit,
-                    )
+            # Save to scan_results
+            for r in results:
+                upsert_scan(conn, r)
+            conn.commit()
+            
+            # Display results
+            for r in results:
+                fit = r.get("csu_fit", "?")
+                fit_emoji = {"STRONG": "🟢", "MODERATE": "🟡", "WEAK": "🟠", "NOT FIT": "🔴"}.get(fit, "⚪")
+                score = r.get("total_score", 0)
+                max_score = r.get("max_score", "?")
+                
+                # Check if already tracked
+                in_p = conn.execute("SELECT 1 FROM portfolio WHERE ticker=?", (r['ticker'],)).fetchone()
+                in_w = conn.execute("SELECT 1 FROM watchlist WHERE ticker=?", (r['ticker'],)).fetchone()
+                status_badge = ""
+                if in_p:
+                    status_badge = " 📊 OWN"
+                elif in_w:
+                    status_badge = " 👀 TRACKING"
+                
+                with st.container(border=True):
+                    hcol, scol, acol = st.columns([3, 1, 1])
+                    with hcol:
+                        st.write(f"{fit_emoji} **{r['ticker']}** — {r.get('name', '?')}{status_badge}")
+                        st.caption(f"{r.get('sector', '?')} / {r.get('industry', '?')} | MCap: ${r.get('market_cap_m', 0):,.0f}M")
+                    with scol:
+                        st.write(f"**{score}/{max_score}** | {fit}")
+                    with acol:
+                        if not in_p and not in_w:
+                            if st.button(f"👀 Watch", key=f"disc_w_{r['ticker']}"):
+                                add_to_watchlist(conn, r['ticker'], r.get('name', ''),
+                                                score=score, max_score=max_score, source=f"discovery_{preset_key}",
+                                                sector=r.get('sector', ''), industry=r.get('industry', ''))
+                                conn.commit()
+                                st.success(f"Added {r['ticker']} to watchlist!")
+                                st.rerun()
                     
-                    if isinstance(results_raw, dict) and "error" in results_raw:
-                        # Screener not available, suggest upgrade
-                        st.warning("⚠️ Custom screener requires Starter plan ($14/mo). Your free plan uses the preset scans above.")
-                    else:
-                        st.success(f"Found {len(results_raw)} companies")
-                        for stock in results_raw[:20]:  # Show top 20
-                            st.write(f"• **{stock.get('symbol', '?')}** — {stock.get('companyName', '?')} | {stock.get('sector', '?')} | MCap: ${stock.get('marketCap', 0)/1e6:,.0f}M")
+                    # Key metrics row
+                    metrics = []
+                    for key, label, fmt in [
+                        ("gross_margin", "Gross M", ".0%"),
+                        ("fcf_margin", "FCF M", ".0%"),
+                        ("fcf_yield", "FCF Y", ".1%"),
+                        ("revenue_growth_3y", "Rev Gr", ".0%"),
+                        ("debt_to_equity", "D/E", ".2f"),
+                    ]:
+                        v = r.get(key)
+                        if v is not None:
+                            try:
+                                metrics.append(f"{label}: {v:{fmt}}")
+                            except (ValueError, TypeError):
+                                metrics.append(f"{label}: {v}")
+                    if metrics:
+                        st.caption(" | ".join(metrics))
+    
+    st.markdown("---")
+    
+    # ── Optional: FMP Integration ──
+    with st.expander("🔑 FMP API Key (Optional — for European stocks)"):
+        st.caption("The free discovery above covers US indexes. Add an FMP key for European exchanges.")
+        api_key = get_api_key()
+        current_key = st.text_input("FMP API Key", value=api_key or "", type="password")
+        if st.button("💾 Save FMP Key") and current_key:
+            save_api_key(current_key)
+            st.success("Saved!")
+        if api_key:
+            if st.button("🧪 Test FMP Key"):
+                ok, msg = test_fmp_key(api_key)
+                st.info(msg) if ok else st.error(msg)
     
     conn.close()
 
@@ -590,14 +558,6 @@ elif page == "⚙️ Settings":
     st.markdown("---")
     
     st.subheader("Danger Zone")
-    
-    # API Key management in settings too
-    with st.expander("🔑 FMP API Key"):
-        current = get_api_key() or ""
-        new_key = st.text_input("API Key", value=current, type="password")
-        if st.button("Save Key", key="settings_key") and new_key:
-            save_api_key(new_key)
-            st.success("Saved!")
     
     if st.button("🗑️ Clear All Scan Results"):
         conn.execute("DELETE FROM scan_results")
