@@ -190,7 +190,7 @@ if page == "📊 Portfolio":
                                     )
                                 
                                 # Update last check timestamp
-                                conn.execute("UPDATE portfolio SET last_kill_check=datetime('now'), updated_at=datetime('now') WHERE ticker=?", (row["ticker"]))
+                                conn.execute("UPDATE portfolio SET last_kill_check=datetime('now'), updated_at=datetime('now') WHERE ticker=?", (row['ticker'],))
                                 conn.commit()
                             else:
                                 st.error(f"Health check LLM returned no result for {row['ticker']}. Check LLM Settings.")
