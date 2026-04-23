@@ -170,7 +170,9 @@ def refresh_etf_holdings(etfs: list[str] = None) -> dict[str, int | str]:
 # ─── IBKR Scanner ─────────────────────────────────────────────────────────────
 
 def ibkr_scan(scanner_type: str = "high_margins") -> list[dict] | None:
-    """Use IBKR's built-in scanner. Only works when Gateway is connected."""
+    """Use IBKR's built-in scanner. Only works when opted in AND Gateway is connected."""
+    if not os.environ.get("CSU_USE_IBKR", "").lower() in ("1", "true", "yes"):
+        return None
     if not is_ib_available():
         return None
     # Ensure event loop exists (Streamlit thread compat)

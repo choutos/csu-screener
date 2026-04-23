@@ -84,22 +84,27 @@ def disconnect_ib():
 
 
 def get_data_source() -> str:
-    """Returns 'ibkr' or 'yfinance' based on what's available."""
-    return "ibkr" if is_ib_available() else "yfinance"
+    """Returns 'ibkr' or 'yfinance' based on config and availability."""
+    if os.environ.get("CSU_USE_IBKR", "").lower() in ("1", "true", "yes"):
+        return "ibkr" if is_ib_available() else "yfinance"
+    return "yfinance"
+
+
+def _should_try_ibkr() -> bool:
+    """Check if we should attempt IBKR. Requires explicit opt-in via env var."""
+    return (os.environ.get("CSU_USE_IBKR", "").lower() in ("1", "true", "yes")
+            and is_ib_available())
 
 
 # ─── Unified Fetch Interface ──────────────────────────────────────────────────
 
 def fetch_company(ticker: str) -> Optional[dict]:
     """
-    Fetch company data from IBKR if available, else yfinance.
-    Returns standardized dict with all fields the scoring engine needs.
+    Fetch company data. Uses yfinance by default.
+    Set CSU_USE_IBKR=1 env var to try IB Gateway first.
     """
-    if is_ib_available():
+    if _should_try_ibkr():
         data = _fetch_from_ibkr(ticker)
-        # Only use IBKR data if it has meaningful content
-        # IBKR returns partial data without paid subscriptions
-        # (no fundamentals, delayed/no market data)
         price = data.get("price") if data else None
         has_price = price is not None and str(price) != 'nan' and price > 0
         has_fundamentals = data.get("gross_margin") is not None if data else False
@@ -115,10 +120,9 @@ def fetch_company(ticker: str) -> Optional[dict]:
 
 
 def fetch_companies_batch(tickers: list[str]) -> list[dict]:
-    """Fetch multiple companies. Uses IBKR's batch capabilities when available."""
-    if is_ib_available():
+    """Fetch multiple companies. Uses IBKR's batch capabilities when opted in."""
+    if _should_try_ibkr():
         results = _fetch_batch_ibkr(tickers)
-        # Only use IBKR if results have real data
         if results and any(r.get("price") and r.get("gross_margin") is not None for r in results):
             for r in results:
                 r["data_source"] = "ibkr"
