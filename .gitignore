@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.pyc
+data/screener-database.csv
+data/results/*.csv
+data/results/*.json
+.DS_Store
