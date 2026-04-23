@@ -32,13 +32,18 @@ def save_api_key(key: str):
 
 
 def test_fmp_key(key: str) -> tuple[bool, str]:
-    """Test FMP API key."""
+    """Test FMP API key using the stable endpoints (v3 is deprecated)."""
     try:
-        r = requests.get("https://financialmodelingprep.com/api/v3/profile/AAPL", params={
+        r = requests.get("https://financialmodelingprep.com/stable/search-symbol", params={
             "apikey": key,
+            "query": "AAPL",
         }, timeout=10)
         if r.status_code == 200:
-            return True, "✅ FMP key works!"
+            data = r.json()
+            if isinstance(data, list) and len(data) > 0:
+                return True, "✅ FMP key works!"
+            else:
+                return False, "❌ FMP: Empty response"
         elif r.status_code == 403:
             return False, "❌ Invalid FMP key"
         elif r.status_code == 402:
