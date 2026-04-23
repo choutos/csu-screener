@@ -205,16 +205,30 @@ elif page == "👀 Watchlist":
                     st.write("")  # spacer
                 
                 # Key info
-                col1, col2, col3 = st.columns(3)
+                col1, col2, col3, col4 = st.columns(4)
                 with col1:
+                    # Current price + buy-under comparison
+                    scan = conn.execute("SELECT price FROM scan_results WHERE ticker=?", (row['ticker'],)).fetchone()
+                    cur_price = scan["price"] if scan else None
+                    if cur_price and row["buy_under"]:
+                        pct_below = (row["buy_under"] - cur_price) / cur_price * 100
+                        if cur_price <= row["buy_under"]:
+                            st.write(f"**💵 Price:** ${cur_price:.2f} 🟢")
+                        else:
+                            st.write(f"**💵 Price:** ${cur_price:.2f} 🔴 ({pct_below:+.0f}% to buy)")
+                    elif cur_price:
+                        st.write(f"**💵 Price:** ${cur_price:.2f}")
+                    else:
+                        st.write("**💵 Price:** —")
+                with col2:
                     if row["buy_under"]:
                         st.write(f"**🎯 Buy Under:** ${row['buy_under']:.2f}")
                     else:
                         st.write("**🎯 Buy Under:** Not set")
-                with col2:
+                with col3:
                     if row["thesis"]:
                         st.write(f"**Thesis:** {row['thesis'][:80]}{'...' if len(row['thesis'])>80 else ''}")
-                with col3:
+                with col4:
                     if row["kill_signals"]:
                         st.write(f"**Kill Signals:** {row['kill_signals'][:80]}{'...' if len(row['kill_signals'])>80 else ''}")
                 
