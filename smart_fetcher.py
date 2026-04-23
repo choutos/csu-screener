@@ -52,6 +52,7 @@ def get_ib_connection():
     if not is_ib_available():
         return None
     
+    _ensure_event_loop()
     try:
         from ib_insync import IB
         ib = IB()
@@ -128,8 +129,21 @@ def fetch_companies_batch(tickers: list[str]) -> list[dict]:
 
 # ─── IBKR Implementation ──────────────────────────────────────────────────────
 
+def _ensure_event_loop():
+    """Ensure an asyncio event loop exists (needed for ib_insync in Streamlit threads)."""
+    import asyncio
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_closed():
+            raise RuntimeError
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+
 def _fetch_from_ibkr(ticker: str) -> Optional[dict]:
     """Fetch comprehensive company data from IB Gateway."""
+    _ensure_event_loop()
     try:
         from ib_insync import IB, Stock, util
         util.startLoop()
@@ -182,6 +196,7 @@ def _fetch_from_ibkr(ticker: str) -> Optional[dict]:
 
 def _fetch_batch_ibkr(tickers: list[str]) -> Optional[list[dict]]:
     """Fetch multiple companies from IBKR."""
+    _ensure_event_loop()
     try:
         from ib_insync import Stock, util
         util.startLoop()
