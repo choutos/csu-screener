@@ -171,17 +171,26 @@ def generate_analysis(data: dict, config: dict = None) -> Optional[dict]:
     try:
         parsed = json.loads(cleaned)
     except json.JSONDecodeError:
-        # Try to find JSON in the response
+        # Try to find the outermost JSON object (handles nested structures)
         import re
-        match = re.search(r'\{[^{}]*\}', cleaned, re.DOTALL)
-        if match:
-            try:
-                parsed = json.loads(match.group())
-            except json.JSONDecodeError:
-                logger.warning(f"Could not parse LLM response as JSON: {raw[:200]}")
-                return None
-        else:
-            logger.warning(f"No JSON found in LLM response: {raw[:200]}")
+        depth = 0
+        start = None
+        for i, ch in enumerate(cleaned):
+            if ch == '{':
+                if depth == 0:
+                    start = i
+                depth += 1
+            elif ch == '}':
+                depth -= 1
+                if depth == 0 and start is not None:
+                    try:
+                        parsed = json.loads(cleaned[start:i+1])
+                        break
+                    except json.JSONDecodeError:
+                        start = None
+                        continue
+        if parsed is None:
+            logger.warning(f"Could not parse LLM response as JSON: {raw[:200]}")
             return None
     
     # Extract and validate fields
@@ -291,24 +300,36 @@ def check_portfolio_health(data: dict, thesis: str, kill_signals: str, config: d
     if not raw:
         return None
     
-    # Parse — same robust parser as generate_analysis
+    # Parse — handles nested JSON (kill_signals_triggered contains objects)
     cleaned = raw.strip()
     if cleaned.startswith("```"):
         lines = cleaned.split("\n")
         cleaned = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
     
+    parsed = None
     try:
         parsed = json.loads(cleaned)
     except json.JSONDecodeError:
         import re
-        match = re.search(r'\{[^{}]*\}', cleaned, re.DOTALL)
-        if match:
-            try:
-                parsed = json.loads(match.group())
-            except json.JSONDecodeError:
-                logger.warning(f"Could not parse health check response: {raw[:200]}")
-                return None
-        else:
+        # Try to find the outermost JSON object (handles nested {} inside arrays)
+        depth = 0
+        start = None
+        for i, ch in enumerate(cleaned):
+            if ch == '{':
+                if depth == 0:
+                    start = i
+                depth += 1
+            elif ch == '}':
+                depth -= 1
+                if depth == 0 and start is not None:
+                    try:
+                        parsed = json.loads(cleaned[start:i+1])
+                        break
+                    except json.JSONDecodeError:
+                        start = None
+                        continue
+        if parsed is None:
+            logger.warning(f"Could not parse health check response: {raw[:200]}")
             return None
     
     # Validate required fields
