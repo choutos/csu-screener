@@ -258,10 +258,29 @@ elif page == "👀 Watchlist":
                 # Actions
                 acol1, acol2, acol3, acol4, acol5 = st.columns(5)
                 with acol1:
+                    # Buy flow: two-step with price/shares input
+                    buy_key = f"buy_step_{row['ticker']}"
                     if st.button(f"📈 Buy →", key=f"buy_{row['ticker']}"):
-                        move_to_portfolio(conn, row["ticker"])
-                        st.success(f"Moved {row['ticker']} to portfolio!")
+                        st.session_state[buy_key] = True
                         st.rerun()
+                    if st.session_state.get(buy_key):
+                        default_price = float(row["last_price"]) if row["last_price"] and row["last_price"] > 0 else 0.0
+                        bcol1, bcol2, bcol3 = st.columns(3)
+                        with bcol1:
+                            buy_price_input = st.number_input("Buy Price", value=default_price, step=1.0, key=f"bp_{row['ticker']}")
+                        with bcol2:
+                            buy_shares_input = st.number_input("Shares", value=0.0, step=1.0, key=f"bs_{row['ticker']}")
+                        with bcol3:
+                            st.write("")  # spacer
+                            if st.button(f"✅ Confirm Buy", key=f"confirm_buy_{row['ticker']}"):
+                                move_to_portfolio(conn, row["ticker"], buy_price=buy_price_input if buy_price_input > 0 else None, shares=buy_shares_input)
+                                conn.commit()
+                                st.session_state.pop(buy_key, None)
+                                st.success(f"Bought {row['ticker']}!")
+                                st.rerun()
+                            if st.button(f"❌ Cancel", key=f"cancel_buy_{row['ticker']}"):
+                                st.session_state.pop(buy_key, None)
+                                st.rerun()
                 with acol2:
                     if st.button(f"🔄 Refresh", key=f"ref_{row['ticker']}"):
                         with st.spinner(f"Fetching {row['ticker']}..."):
