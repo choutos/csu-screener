@@ -163,6 +163,24 @@ elif page == "👀 Watchlist":
     st.caption("Companies you're tracking. Buy when price hits your target.")
     
     conn = get_db()
+
+    # Refresh All button
+    if st.button("🔄 Refresh All Prices", type="secondary"):
+        wl_tickers = conn.execute("SELECT ticker FROM watchlist").fetchall()
+        progress = st.progress(0, text="Fetching prices...")
+        updated = 0
+        for i, t in enumerate(wl_tickers):
+            data = smart_fetch(t["ticker"])
+            if data:
+                scored = score_company(data)
+                upsert_scan(conn, scored)
+                conn.execute("UPDATE watchlist SET score=?, max_score=?, last_price=?, last_checked=datetime('now'), updated_at=datetime('now') WHERE ticker=?",
+                             (scored["total_score"], scored["max_score"], scored.get("price"), t["ticker"]))
+                updated += 1
+            progress.progress((i + 1) / len(wl_tickers), text=f"{i+1}/{len(wl_tickers)} — {t['ticker']}")
+        st.success(f"Updated {updated}/{len(wl_tickers)} companies")
+        st.rerun()
+
     rows = conn.execute("SELECT * FROM watchlist ORDER BY priority, last_checked DESC").fetchall()
     
     if not rows:
