@@ -7,7 +7,7 @@ Run: streamlit run app.py
 import streamlit as st
 from db import get_db, add_to_portfolio, add_to_watchlist, move_to_portfolio, move_to_watchlist, remove_from_watchlist, remove_from_portfolio, log_kill_signal, update_portfolio_status, upsert_scan
 from fetcher import fetch_company, score_company
-from discovery import get_api_key, save_api_key, test_api_key, run_discovery_scan, get_available_sectors
+from discovery import get_api_key, save_api_key, test_api_key, check_plan, run_discovery, discover_stocks_screener
 import pandas as pd
 from datetime import datetime
 from pathlib import Path
@@ -354,14 +354,17 @@ elif page == "🧭 Discovery":
     
     with st.expander("🔑 API Configuration", expanded=not api_key):
         st.markdown("""
-        **Financial Modeling Prep API** — Free tier gives 250 requests/day.
+        **Financial Modeling Prep API** — works with both free and paid plans.
+        
+        - **Free plan:** 250 requests/day. Uses stock list + profile for discovery.
+        - **Starter plan** ($14/mo): Full stock screener with advanced filters.
         
         Get your key at: https://site.financialmodelingprep.com/register
         """)
         
         current_key = st.text_input("API Key", value=api_key or "", type="password")
         
-        col1, col2 = st.columns(2)
+        col1, col2, col3 = st.columns(3)
         with col1:
             if st.button("💾 Save Key") and current_key:
                 save_api_key(current_key)
@@ -370,10 +373,17 @@ elif page == "🧭 Discovery":
         with col2:
             if st.button("🧪 Test Key") and current_key:
                 with st.spinner("Testing..."):
-                    if test_api_key(current_key):
-                        st.success("✅ API key works!")
+                    ok, msg = test_api_key(current_key)
+                    if ok:
+                        st.success(msg)
                     else:
-                        st.error("❌ API key invalid or request failed.")
+                        st.error(msg)
+        with col3:
+            if st.button("🔍 Check Plan") and current_key:
+                with st.spinner("Checking..."):
+                    plan = check_plan(current_key)
+                    plan_name = "Starter+ (full screener)" if plan == "starter" else "Free (limited)"
+                    st.info(f"Plan: {plan_name}")
     
     if not api_key:
         st.warning("Configure your FMP API key above to start discovering companies.")
@@ -403,7 +413,7 @@ elif page == "🧭 Discovery":
         if st.button("🚀 Run Discovery Scan", type="primary"):
             with st.spinner("Scanning universe via FMP..."):
                 ex = None if exchange == "Any" else exchange
-                results = run_discovery_scan(api_key, preset=preset_key, exchange=ex)
+                results = run_discovery(api_key, preset=preset_key, exchange=ex)
                 
                 if isinstance(results, dict) and "error" in results:
                     st.error(f"Scan failed: {results['error']}")
@@ -490,8 +500,8 @@ elif page == "🧭 Discovery":
                 with st.spinner("Scanning..."):
                     results = run_discovery_scan(api_key, preset="quality_compounders")
                     # Override with custom params
-                    from discovery import discover_quality_stocks
-                    results = discover_quality_stocks(
+                    from discovery import discover_stocks_screener
+                    results_raw = discover_stocks_screener(
                         api_key,
                         min_market_cap=int(cs_min_mcap * 1e6),
                         max_market_cap=int(cs_max_mcap * 1e6),
@@ -501,11 +511,12 @@ elif page == "🧭 Discovery":
                         limit=cs_limit,
                     )
                     
-                    if isinstance(results, dict) and "error" in results:
-                        st.error(f"Scan failed: {results['error']}")
+                    if isinstance(results_raw, dict) and "error" in results_raw:
+                        # Screener not available, suggest upgrade
+                        st.warning("⚠️ Custom screener requires Starter plan ($14/mo). Your free plan uses the preset scans above.")
                     else:
-                        st.success(f"Found {len(results)} companies")
-                        for stock in results[:20]:  # Show top 20
+                        st.success(f"Found {len(results_raw)} companies")
+                        for stock in results_raw[:20]:  # Show top 20
                             st.write(f"• **{stock.get('symbol', '?')}** — {stock.get('companyName', '?')} | {stock.get('sector', '?')} | MCap: ${stock.get('marketCap', 0)/1e6:,.0f}M")
     
     conn.close()
