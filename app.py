@@ -76,17 +76,18 @@ if page == "📊 Portfolio":
             s = r["status"]
             statuses[s] = statuses.get(s, 0) + 1
         
-        col1, col2, col3, col4 = st.columns(4)
+        col1, col2, col3, col4, col5 = st.columns(5)
         col1.metric("Positions", total_positions)
         col2.metric("HOLD", statuses.get("HOLD", 0))
-        col3.metric("SELL", statuses.get("SELL", 0))
-        col4.metric("BUY MORE", statuses.get("BUY_MORE", 0))
+        col3.metric("WATCH", statuses.get("WATCH", 0))
+        col4.metric("SELL", statuses.get("SELL", 0))
+        col5.metric("BUY MORE", statuses.get("BUY_MORE", 0))
         
         st.markdown("---")
         
         # Position cards
         for row in rows:
-            status_emoji = {"HOLD": "🟢", "SELL": "🔴", "BUY_MORE": "🔵"}.get(row["status"], "⚪")
+            status_emoji = {"HOLD": "🟢", "WATCH": "🟡", "SELL": "🔴", "BUY_MORE": "🔵"}.get(row["status"], "⚪")
             score_pct = round(row["score"] / row["max_score"] * 100) if row["max_score"] else 0
             
             with st.container(border=True):
@@ -96,9 +97,11 @@ if page == "📊 Portfolio":
                     st.caption(f"{row['sector']} / {row['industry']}")
                 
                 with status_col:
+                    status_options = ["HOLD", "WATCH", "SELL", "BUY_MORE"]
+                    current_status = row["status"] if row["status"] in status_options else "HOLD"
                     new_status = st.selectbox(
-                        "Status", ["HOLD", "SELL", "BUY_MORE"],
-                        index=["HOLD", "SELL", "BUY_MORE"].index(row["status"]),
+                        "Status", status_options,
+                        index=status_options.index(current_status),
                         key=f"status_{row['ticker']}"
                     )
                     if new_status != row["status"]:
@@ -195,6 +198,13 @@ if page == "📊 Portfolio":
                                         scored.get("price")
                                     )
                                 
+                                # Auto-update status based on recommendation
+                                action_map = {"HOLD": "HOLD", "WATCH": "WATCH", "SELL": "SELL", "BUY_MORE": "BUY_MORE"}
+                                new_status = action_map.get(result["overall_action"])
+                                if new_status and new_status != row["status"]:
+                                    update_portfolio_status(conn, row["ticker"], new_status)
+                                    st.info(f"Status updated: {row['status']} → {new_status}")
+
                                 # Update last check timestamp
                                 conn.execute("UPDATE portfolio SET last_kill_check=datetime('now'), updated_at=datetime('now') WHERE ticker=?", (row['ticker'],))
                                 conn.commit()
