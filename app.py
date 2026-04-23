@@ -477,7 +477,6 @@ elif page == "🧭 Discovery":
     
     if st.button("🚀 Run Discovery Scan", type="primary", disabled=available==0):
         progress = st.progress(0, text="Starting scan...")
-        results = []
         
         def on_progress(current, total, ticker):
             pct = int((current + 1) / total * 100)
@@ -490,7 +489,11 @@ elif page == "🧭 Discovery":
             results = []
         
         progress.empty()
-        
+        st.session_state["discovery_results"] = results
+    
+    # Show results from session state (survives rerun after Watch button)
+    results = st.session_state.get("discovery_results", None)
+    if results is not None:
         if not results:
             st.info("No companies passed the filters. Try relaxing criteria or scanning more tickers.")
         else:
