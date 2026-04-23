@@ -338,7 +338,20 @@ def run_discovery(preset: str = "quality_compounders",
             seen.add(t)
             unique.append(t)
 
-    to_scan = unique[:batch_size]
+    # Skip already-scanned tickers (avoid re-scanning same companies)
+    try:
+        conn = get_db()
+        already = {r[0] for r in conn.execute("SELECT ticker FROM scan_results").fetchall()}
+        fresh = [t for t in unique if t not in already]
+    except Exception:
+        fresh = unique
+
+    # Random sample from fresh tickers (don't always start from A)
+    import random
+    pool = fresh if len(fresh) >= batch_size else unique  # fallback if all scanned
+    random.seed()  # true randomness each run
+    sample_size = min(batch_size, len(pool))
+    to_scan = random.sample(pool, sample_size)
     results = []
     for i, ticker in enumerate(to_scan):
         if progress_callback:
