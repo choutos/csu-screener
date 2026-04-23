@@ -6,6 +6,7 @@ Supports any OpenAI-compatible API (ollama, litellm proxy, etc.)
 import json
 import logging
 from typing import Optional
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
