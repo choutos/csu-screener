@@ -14,6 +14,12 @@ import pandas as pd
 from datetime import datetime
 from pathlib import Path
 
+# ─── Shared DB connection (singleton) ───────────────────────────────────────────
+@st.cache_resource
+def _get_shared_db():
+    """Single cached connection — avoids 'database is locked' from overlapping connections."""
+    return get_db()
+
 # ─── Page Config ──────────────────────────────────────────────────────────────
 st.set_page_config(page_title="Invest Process", page_icon="🎩", layout="wide")
 
@@ -34,7 +40,7 @@ if page == "📊 Portfolio":
     st.title("📊 Portfolio")
     st.caption("Track holdings, monitor kill signals, decide HOLD / SELL / BUY MORE")
     
-    conn = get_db()
+    conn = _get_shared_db()
     rows = conn.execute("SELECT * FROM portfolio ORDER BY updated_at DESC").fetchall()
     
     if not rows:
@@ -207,7 +213,7 @@ if page == "📊 Portfolio":
                         sev_emoji = {"OK": "✅", "WARNING": "⚠️", "CRITICAL": "🔴"}.get(kl["severity"], "⚪")
                         st.caption(f"{sev_emoji} {kl['check_date'][:10]} — {kl['signal_type']}: {kl['details'][:80] if kl['details'] else ''} → {kl['action']}")
     
-    conn.close()
+    pass  # conn shared via cache
 
 
 # ─── Watchlist Dashboard ─────────────────────────────────────────────────────
@@ -215,7 +221,7 @@ elif page == "👀 Watchlist":
     st.title("👀 Watchlist")
     st.caption("Companies you're tracking. Buy when price hits your target.")
     
-    conn = get_db()
+    conn = _get_shared_db()
 
     # Refresh All button
     if st.button("🔄 Refresh All Prices", type="secondary"):
@@ -392,7 +398,7 @@ elif page == "👀 Watchlist":
                                      (new_bu, row["ticker"]))
                         conn.commit()
     
-    conn.close()
+    pass  # conn shared via cache
 
 
 # ─── Scanner Dashboard ────────────────────────────────────────────────────────
@@ -400,7 +406,7 @@ elif page == "🔍 Scanner":
     st.title("🔍 Scanner")
     st.caption("Discover new investment candidates. Not limited to software.")
     
-    conn = get_db()
+    conn = _get_shared_db()
     
     # Quick scan
     st.subheader("Quick Scan")
@@ -497,7 +503,7 @@ elif page == "🔍 Scanner":
     else:
         st.info("No scan results yet. Run a scan above.")
     
-    conn.close()
+    pass  # conn shared via cache
 
 
 # ─── Discovery Dashboard ──────────────────────────────────────────────────────
@@ -505,7 +511,7 @@ elif page == "🧭 Discovery":
     st.title("🧭 Discovery")
     st.caption("Auto-discover quality companies from index constituents. No API key needed — uses Wikipedia + yfinance.")
     
-    conn = get_db()
+    conn = _get_shared_db()
     
     # ── Index Cache Status ──
     st.subheader("Index Universe")
@@ -692,14 +698,14 @@ elif page == "🧭 Discovery":
                 else:
                     st.error(msg)
     
-    conn.close()
+    pass  # conn shared via cache
 
 
 # ─── Settings ─────────────────────────────────────────────────────────────────
 elif page == "⚙️ Settings":
     st.title("⚙️ Settings")
     
-    conn = get_db()
+    conn = _get_shared_db()
     
     st.subheader("Database Stats")
     p_count = conn.execute("SELECT COUNT(*) FROM portfolio").fetchone()[0]
@@ -816,4 +822,4 @@ elif page == "⚙️ Settings":
         st.warning("Cleared all scan results.")
         st.rerun()
     
-    conn.close()
+    pass  # conn shared via cache
