@@ -309,10 +309,13 @@ elif page == "👀 Watchlist":
                             }
                             with st.expander(f"📊 Score Breakdown ({row['score']}/{row['max_score']})"):
                                 for kpi, (label, threshold) in kpi_labels.items():
-                                    s = scores.get(kpi, '?')
+                                    s = scores.get(kpi)
                                     p = passes.get(kpi, False)
-                                    icon = '✅' if p else '❌'
-                                    st.write(f"{icon} **{label}**: {s}/3 — {threshold}")
+                                    if s is None:
+                                        st.write(f"⚪ **{label}**: N/A — {threshold}")
+                                    else:
+                                        icon = '✅' if p else '❌'
+                                        st.write(f"{icon} **{label}**: {s}/3 — {threshold}")
                         except (json.JSONDecodeError, KeyError):
                             pass
                 
