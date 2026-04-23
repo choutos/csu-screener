@@ -1,7 +1,6 @@
-.venv/
 __pycache__/
 *.pyc
-data/screener-database.csv
-data/results/*.csv
-data/results/*.json
+.venv/
+invest.db
+fmp_api_key.txt
 .DS_Store
