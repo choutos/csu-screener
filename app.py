@@ -5,6 +5,7 @@ Three dashboards: Portfolio, Watchlist, Scanner.
 Run: streamlit run app.py
 """
 import streamlit as st
+import json
 from db import get_db, add_to_portfolio, add_to_watchlist, move_to_portfolio, move_to_watchlist, remove_from_watchlist, remove_from_portfolio, log_kill_signal, update_portfolio_status, upsert_scan
 from fetcher import fetch_company, score_company
 from smart_fetcher import fetch_company as smart_fetch, calculate_buy_under, get_data_source, is_ib_available
@@ -244,8 +245,8 @@ elif page == "👀 Watchlist":
                 scored = score_company(data)
                 upsert_scan(conn, scored)
                 price_val = scored.get("price")
-                conn.execute("UPDATE watchlist SET score=?, max_score=?, last_price=?, last_checked=datetime('now'), updated_at=datetime('now') WHERE ticker=?",
-                             (scored["total_score"], scored["max_score"], price_val, t["ticker"]))
+                conn.execute("UPDATE watchlist SET score=?, max_score=?, last_price=?, last_checked=datetime('now'), updated_at=datetime('now'), score_breakdown=? WHERE ticker=?",
+                             (scored["total_score"], scored["max_score"], price_val, json.dumps({"scores": scored.get("scores", {}), "passes": scored.get("passes", {})}), t["ticker"]))
                 updated += 1
                 conn.commit()
             progress.progress((i + 1) / len(wl_tickers), text=f"{i+1}/{len(wl_tickers)} — {t['ticker']}")
@@ -289,6 +290,31 @@ elif page == "👀 Watchlist":
                 with hcol:
                     st.subheader(f"{pri_emoji} {row['ticker']} — {row['name']}")
                     st.caption(f"{row['sector']} / {row['industry']} | Score: {row['score']}/{row['max_score']} ({score_pct}%) | Tracked since: {row['first_tracked'][:10] if row['first_tracked'] else '?'}")
+                    # Score breakdown expander
+                    breakdown_raw = row['score_breakdown'] if 'score_breakdown' in row.keys() else None
+                    if breakdown_raw:
+                        try:
+                            bd = json.loads(breakdown_raw)
+                            scores = bd.get('scores', {})
+                            passes = bd.get('passes', {})
+                            kpi_labels = {
+                                'fcf_margin': ('FCF Margin', '≥10%'),
+                                'gross_margin': ('Gross Margin', '≥40%'),
+                                'revenue_stability': ('Rev Stability', '≤25% vol'),
+                                'growth_profile': ('Growth', '−5% to 25%'),
+                                'fcf_yield': ('FCF Yield', '≥2%'),
+                                'debt_discipline': ('Debt Discipline', 'D/E ≤2.0'),
+                                'size_fit': ('Size Fit', '≥$200M'),
+                                'moat_quality': ('Moat', '≥40% GM'),
+                            }
+                            with st.expander(f"📊 Score Breakdown ({row['score']}/{row['max_score']})"):
+                                for kpi, (label, threshold) in kpi_labels.items():
+                                    s = scores.get(kpi, '?')
+                                    p = passes.get(kpi, False)
+                                    icon = '✅' if p else '❌'
+                                    st.write(f"{icon} **{label}**: {s}/3 — {threshold}")
+                        except (json.JSONDecodeError, KeyError):
+                            pass
                 
                 with acol:
                     st.write("")  # spacer
@@ -356,8 +382,9 @@ elif page == "👀 Watchlist":
                             if data:
                                 scored = score_company(data)
                                 upsert_scan(conn, scored)
-                                conn.execute("UPDATE watchlist SET score=?, max_score=?, last_price=?, last_checked=datetime('now'), updated_at=datetime('now') WHERE ticker=?",
-                                             (scored["total_score"], scored["max_score"], scored.get("price"), row["ticker"]))
+                                breakdown_json = json.dumps({"scores": scored.get("scores", {}), "passes": scored.get("passes", {})})
+                                conn.execute("UPDATE watchlist SET score=?, max_score=?, last_price=?, last_checked=datetime('now'), updated_at=datetime('now'), score_breakdown=? WHERE ticker=?",
+                                             (scored["total_score"], scored["max_score"], scored.get("price"), breakdown_json, row["ticker"]))
                                 conn.commit()
                                 if not row["buy_under"]:
                                     bu = calculate_buy_under(row["ticker"], data)

@@ -106,7 +106,11 @@ def init_db():
     try:
         conn.execute("ALTER TABLE watchlist ADD COLUMN last_price REAL")
     except Exception:
-        pass  # column already exists
+        pass
+    try:
+        conn.execute("ALTER TABLE watchlist ADD COLUMN score_breakdown TEXT")
+    except Exception:
+        pass
     conn.close()
 
 
