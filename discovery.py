@@ -106,14 +106,19 @@ def _save_cached_tickers(index: str, tickers: list[str]):
     cache.write_text(json.dumps(tickers))
 
 
-def refresh_index_cache() -> dict[str, int]:
-    """Refresh all index caches. Returns {index: count}."""
+def refresh_index_cache() -> dict[str, int | str]:
+    """Refresh all index caches. Returns {index: count} or {index: error_msg}."""
     results = {}
     for name, fn in [("sp500", get_sp500_tickers), ("sp400", get_sp400_tickers), ("sp600", get_sp600_tickers)]:
-        tickers = fn()
-        if tickers:
-            _save_cached_tickers(name, tickers)
-            results[name] = len(tickers)
+        try:
+            tickers = fn()
+            if tickers:
+                _save_cached_tickers(name, tickers)
+                results[name] = len(tickers)
+            else:
+                results[name] = "empty response"
+        except Exception as e:
+            results[name] = f"error: {e}"
     return results
 
 

@@ -364,8 +364,15 @@ elif page == "🧭 Discovery":
         if st.button("🔄 Refresh All", help="Re-download index constituents from Wikipedia"):
             with st.spinner("Refreshing..."):
                 counts = refresh_index_cache()
-                st.success(f"Updated: {', '.join(f'{k}={v}' for k,v in counts.items())}")
-                st.rerun()
+                ok = True
+                for k, v in counts.items():
+                    if isinstance(v, str):
+                        st.error(f"{k.upper()}: {v}")
+                        ok = False
+                    else:
+                        st.success(f"{k.upper()}: {v} tickers")
+                if ok:
+                    st.rerun()
     
     if needs_refresh:
         st.info("👆 Click Refresh to download the index tickers first.")
