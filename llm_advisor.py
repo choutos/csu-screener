@@ -70,7 +70,7 @@ def _call_llm(system_prompt: str, user_prompt: str, config: dict = None) -> Opti
                 {"role": "user", "content": user_prompt},
             ],
             temperature=0.3,
-            max_tokens=2000,
+            max_tokens=3000,
         )
         content = response.choices[0].message.content.strip()
         if not content:
@@ -224,10 +224,10 @@ def generate_analysis(data: dict, config: dict = None) -> Optional[dict]:
 # ─── Portfolio Health Check ──────────────────────────────────────────────────
 
 HEALTH_SYSTEM_PROMPT = """You are an investment analyst performing a portfolio health check. 
-Your job is to evaluate whether a company's original investment thesis is still intact 
-and whether any kill signals have been triggered based on current data.
+Evaluate whether the original thesis is still valid and whether kill signals have been triggered.
 
-You must respond ONLY with valid JSON — no markdown, no commentary, no code fences."""
+CRITICAL: Respond ONLY with valid JSON. No markdown, no code fences, no commentary outside the JSON.
+Be CONCISE — thesis_assessment max 2 short sentences, each risk/signal max 10 words."""
 
 HEALTH_USER_PROMPT = """Perform a health check on this portfolio position:
 
@@ -254,15 +254,15 @@ Evaluate:
 2. Have any kill signals been triggered? Which ones?
 3. Are there NEW risks not covered by the existing kill signals?
 
-Respond with JSON:
+Respond with JSON (be BRIEF — max 2 short sentences per field, max 3 items per array):
 {{
   "thesis_status": "INTACT" | "WEAKENED" | "BROKEN",
-  "thesis_assessment": "2-3 sentences explaining why the thesis is/isn't still valid",
-  "kill_signals_triggered": [{{"signal": "description", "severity": "WARNING"|"CRITICAL"}}],
+  "thesis_assessment": "max 2 short sentences",
+  "kill_signals_triggered": [{{"signal": "brief description", "severity": "WARNING"|"CRITICAL"}}],
   "new_risks": ["risk 1", "risk 2"],
   "overall_action": "HOLD" | "SELL" | "BUY_MORE" | "WATCH",
   "confidence": 0.0-1.0,
-  "summary": "1-2 sentence executive summary"
+  "summary": "1 sentence"
 }}"""
 
 
