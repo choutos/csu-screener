@@ -134,8 +134,8 @@ def score_company(data: dict) -> dict:
 
     # 8. Moat Quality (sector-aware heuristic)
     # High-margin industries = likely moat; low-margin = need to prove it
-    industry = data.get("industry", "").lower()
-    sector = data.get("sector", "").lower()
+    industry = (data.get("industry") or "").lower()
+    sector = (data.get("sector") or "").lower()
     gm = data.get("gross_margin", 0) or 0
     
     if gm >= 0.60:
