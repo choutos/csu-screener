@@ -126,6 +126,34 @@ if page == "📊 Portfolio":
                 
                 with det_col2:
                     st.write(f"**Score:** {row['score']}/{row['max_score']} ({score_pct}%)")
+                    # Score breakdown expander
+                    breakdown_raw = row['score_breakdown'] if 'score_breakdown' in row.keys() else None
+                    if breakdown_raw:
+                        try:
+                            bd = json.loads(breakdown_raw)
+                            scores = bd.get('scores', {})
+                            passes = bd.get('passes', {})
+                            kpi_labels = {
+                                'fcf_margin': ('FCF Margin', '≥10%'),
+                                'gross_margin': ('Gross Margin', '≥40%'),
+                                'revenue_stability': ('Rev Stability', '≤25% vol'),
+                                'growth_profile': ('Growth', '−5% to 25%'),
+                                'fcf_yield': ('FCF Yield', '≥2%'),
+                                'debt_discipline': ('Debt Discipline', 'D/E ≤2.0'),
+                                'size_fit': ('Size Fit', '≥$200M'),
+                                'moat_quality': ('Moat', '≥40% GM'),
+                            }
+                            with st.expander(f"📊 Breakdown ({row['score']}/{row['max_score']})"):
+                                for kpi, (label, threshold) in kpi_labels.items():
+                                    s = scores.get(kpi)
+                                    p = passes.get(kpi, False)
+                                    if s is None:
+                                        st.write(f"⚪ **{label}**: N/A — {threshold}")
+                                    else:
+                                        icon = '✅' if p else '❌'
+                                        st.write(f"{icon} **{label}**: {s}/3 — {threshold}")
+                        except (json.JSONDecodeError, KeyError):
+                            pass
                     if row["last_kill_check"]:
                         st.write(f"**Last Kill Check:** {row['last_kill_check'][:10]}")
                 
@@ -206,8 +234,10 @@ if page == "📊 Portfolio":
                                     update_portfolio_status(conn, row["ticker"], new_status)
                                     st.info(f"Status updated: {row['status']} → {new_status}")
 
-                                # Update last check timestamp
-                                conn.execute("UPDATE portfolio SET last_kill_check=datetime('now'), updated_at=datetime('now') WHERE ticker=?", (row['ticker'],))
+                                # Update score, breakdown, and last check
+                                breakdown_json = json.dumps({"scores": scored.get("scores", {}), "passes": scored.get("passes", {})})
+                                conn.execute("UPDATE portfolio SET score=?, max_score=?, score_breakdown=?, last_kill_check=datetime('now'), updated_at=datetime('now') WHERE ticker=?",
+                                             (scored["total_score"], scored["max_score"], breakdown_json, row['ticker']))
                                 conn.commit()
                             else:
                                 st.error(f"Health check LLM returned no result for {row['ticker']}. Check LLM Settings.")

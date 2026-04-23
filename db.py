@@ -111,6 +111,10 @@ def init_db():
         conn.execute("ALTER TABLE watchlist ADD COLUMN score_breakdown TEXT")
     except Exception:
         pass
+    try:
+        conn.execute("ALTER TABLE portfolio ADD COLUMN score_breakdown TEXT")
+    except Exception:
+        pass
     conn.close()
 
 
