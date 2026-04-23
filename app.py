@@ -8,7 +8,7 @@ import streamlit as st
 from db import get_db, add_to_portfolio, add_to_watchlist, move_to_portfolio, move_to_watchlist, remove_from_watchlist, remove_from_portfolio, log_kill_signal, update_portfolio_status, upsert_scan
 from fetcher import fetch_company, score_company
 from smart_fetcher import fetch_company as smart_fetch, calculate_buy_under, get_data_source, is_ib_available
-from llm_advisor import generate_analysis, load_config as load_llm_config, save_config as save_llm_config, test_connection as test_llm_connection
+from llm_advisor import generate_analysis, check_portfolio_health, load_config as load_llm_config, save_config as save_llm_config, test_connection as test_llm_connection
 from discovery import get_api_key, save_api_key, test_fmp_key, run_discovery, get_available_ticker_count, get_index_stats, refresh_index_cache, refresh_etf_holdings, PRESETS, INDEX_SOURCES, ETF_SOURCES, ibkr_scan
 import pandas as pd
 from datetime import datetime
@@ -123,27 +123,79 @@ if page == "📊 Portfolio":
                     if row["thesis"]:
                         st.write(f"**Thesis:** {row['thesis'][:100]}{'...' if len(row['thesis'])>100 else ''}")
                 
-                # Kill signals
+                # Kill signals (expandable)
                 if row["kill_signals"]:
                     with st.expander("⚠️ Kill Signals"):
                         st.write(row["kill_signals"])
                 
-                # Kill signal check
-                with st.expander("🔍 Run Kill Signal Check"):
-                    with st.form(f"kill_{row['ticker']}"):
-                        signal_type = st.selectbox("Signal Type", [
-                            "RETENTION_DROP", "FCF_COMPRESS", "VOLATILITY_SPIKE",
-                            "THESIS_CHANGE", "MGMT_TURNOVER", "VALUATION_STRETCH", "OTHER"
-                        ])
-                        severity = st.selectbox("Severity", ["OK", "WARNING", "CRITICAL"])
-                        details = st.text_area("Details")
-                        action = st.selectbox("Action", ["HOLD", "SELL", "BUY_MORE", "WATCH"])
-                        
-                        if st.form_submit_button("Log Signal"):
-                            log_kill_signal(conn, row["ticker"], signal_type, severity, details, action)
-                            update_portfolio_status(conn, row["ticker"], action)
-                            st.success("Logged!")
-                            st.rerun()
+                # ── Health Check ──
+                hc_col1, hc_col2 = st.columns([1, 3])
+                with hc_col1:
+                    if st.button(f"🩺 Health Check", key=f"hc_{row['ticker']}"):
+                        st.session_state[f"hc_run_{row['ticker']}"] = True
+                        st.rerun()
+                with hc_col2:
+                    # Show last health check result if available
+                    last_hc = st.session_state.get(f"hc_result_{row['ticker']}")
+                    if last_hc:
+                        status_colors = {"INTACT": "🟢", "WEAKENED": "🟡", "BROKEN": "🔴"}
+                        status_emoji = status_colors.get(last_hc["thesis_status"], "⚪")
+                        st.write(f"{status_emoji} **Thesis: {last_hc['thesis_status']}** — {last_hc['summary']}")
+                
+                # Run health check on demand
+                if st.session_state.get(f"hc_run_{row['ticker']}"):
+                    st.session_state.pop(f"hc_run_{row['ticker']}", None)
+                    with st.spinner(f"Checking {row['ticker']}..."):
+                        # Fetch current data
+                        data = smart_fetch(row["ticker"])
+                        if data:
+                            scored = score_company(data)
+                            upsert_scan(conn, scored)
+                            result = check_portfolio_health(scored, row["thesis"], row["kill_signals"])
+                            if result:
+                                st.session_state[f"hc_result_{row['ticker']}"] = result
+                                
+                                # Display the health check result
+                                status_colors = {"INTACT": "🟢", "WEAKENED": "🟡", "BROKEN": "🔴"}
+                                status_emoji = status_colors.get(result["thesis_status"], "⚪")
+                                
+                                st.markdown(f"### {status_emoji} Thesis: {result['thesis_status']}")
+                                st.write(result["thesis_assessment"])
+                                
+                                if result.get("kill_signals_triggered"):
+                                    st.markdown("**⚠️ Kill Signals Triggered:**")
+                                    for ks in result["kill_signals_triggered"]:
+                                        sev = "🔴" if ks.get("severity") == "CRITICAL" else "🟡"
+                                        st.write(f"{sev} {ks.get('signal', '?')}")
+                                else:
+                                    st.markdown("**✅ No kill signals triggered**")
+                                
+                                if result.get("new_risks"):
+                                    st.markdown("**🆕 New Risks:**")
+                                    for risk in result["new_risks"]:
+                                        st.write(f"• {risk}")
+                                
+                                action_emoji = {"HOLD": "🟢", "SELL": "🔴", "BUY_MORE": "🔵", "WATCH": "🟡"}
+                                st.markdown(f"**Recommendation:** {action_emoji.get(result['overall_action'], '⚪')} {result['overall_action']} (confidence: {result['confidence']:.0%})")
+                                
+                                # Log triggered kill signals
+                                for ks in result.get("kill_signals_triggered", []):
+                                    log_kill_signal(
+                                        conn, row["ticker"],
+                                        "THESIS_CHANGE" if result["thesis_status"] == "BROKEN" else "OTHER",
+                                        ks.get("severity", "WARNING"),
+                                        ks.get("signal", ""),
+                                        result["overall_action"],
+                                        scored.get("price")
+                                    )
+                                
+                                # Update last check timestamp
+                                conn.execute("UPDATE portfolio SET last_kill_check=datetime('now'), updated_at=datetime('now') WHERE ticker=?", (row["ticker"]))
+                                conn.commit()
+                            else:
+                                st.error("LLM health check failed. Check Settings → LLM Advisor.")
+                        else:
+                            st.warning(f"Could not fetch data for {row['ticker']}")
                 
                 # Recent kill signal history
                 kill_logs = conn.execute(

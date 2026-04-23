@@ -206,6 +206,125 @@ def generate_analysis(data: dict, config: dict = None) -> Optional[dict]:
     return result
 
 
+
+
+# ─── Portfolio Health Check ──────────────────────────────────────────────────
+
+HEALTH_SYSTEM_PROMPT = """You are an investment analyst performing a portfolio health check. 
+Your job is to evaluate whether a company's original investment thesis is still intact 
+and whether any kill signals have been triggered based on current data.
+
+You must respond ONLY with valid JSON — no markdown, no commentary, no code fences."""
+
+HEALTH_USER_PROMPT = """Perform a health check on this portfolio position:
+
+Ticker: {ticker}
+Name: {name}
+
+**Original Thesis:**
+{thesis}
+
+**Defined Kill Signals:**
+{kill_signals}
+
+**Current Metrics:**
+- Price: ${current_price}
+- Gross Margin: {gross_margin}
+- FCF Margin: {fcf_margin}
+- FCF Yield: {fcf_yield}
+- Revenue Growth (3Y): {revenue_growth_3y}
+- Debt/Equity: {debt_to_equity}
+- Score: {total_score}/{max_score}
+
+Evaluate:
+1. Is the original thesis still valid? What's changed?
+2. Have any kill signals been triggered? Which ones?
+3. Are there NEW risks not covered by the existing kill signals?
+
+Respond with JSON:
+{{
+  "thesis_status": "INTACT" | "WEAKENED" | "BROKEN",
+  "thesis_assessment": "2-3 sentences explaining why the thesis is/isn't still valid",
+  "kill_signals_triggered": [{{"signal": "description", "severity": "WARNING"|"CRITICAL"}}],
+  "new_risks": ["risk 1", "risk 2"],
+  "overall_action": "HOLD" | "SELL" | "BUY_MORE" | "WATCH",
+  "confidence": 0.0-1.0,
+  "summary": "1-2 sentence executive summary"
+}}"""
+
+
+def check_portfolio_health(data: dict, thesis: str, kill_signals: str, config: dict = None) -> Optional[dict]:
+    """
+    Evaluate whether a portfolio position's thesis is still valid and kill signals triggered.
+    
+    Args:
+        data: Current company data dict
+        thesis: The original investment thesis
+        kill_signals: The defined kill signals
+        config: Optional LLM config override
+    
+    Returns:
+        dict with thesis_status, thesis_assessment, kill_signals_triggered, new_risks,
+               overall_action, confidence, summary
+    """
+    cfg = config or load_config()
+    if not cfg.get("enabled", True):
+        return None
+    
+    fmt = {
+        "ticker": data.get("ticker", "?"),
+        "name": data.get("name", "?"),
+        "thesis": thesis or "No thesis recorded",
+        "kill_signals": kill_signals or "No kill signals defined",
+        "current_price": data.get("price", "N/A"),
+        "gross_margin": f"{data.get('gross_margin', 0) or 0:.0%}" if data.get("gross_margin") is not None else "N/A",
+        "fcf_margin": f"{data.get('fcf_margin', 0) or 0:.0%}" if data.get("fcf_margin") is not None else "N/A",
+        "fcf_yield": f"{data.get('fcf_yield', 0) or 0:.1%}" if data.get("fcf_yield") is not None else "N/A",
+        "revenue_growth_3y": f"{data.get('revenue_growth_3y', 0) or 0:.0%}" if data.get("revenue_growth_3y") is not None else "N/A",
+        "debt_to_equity": f"{data.get('debt_to_equity', 0) or 0:.2f}" if data.get("debt_to_equity") is not None else "N/A",
+        "total_score": data.get("total_score", "?"),
+        "max_score": data.get("max_score", "?"),
+    }
+    
+    user_prompt = HEALTH_USER_PROMPT.format(**fmt)
+    raw = _call_llm(HEALTH_SYSTEM_PROMPT, user_prompt, cfg)
+    if not raw:
+        return None
+    
+    # Parse — same robust parser as generate_analysis
+    cleaned = raw.strip()
+    if cleaned.startswith("```"):
+        lines = cleaned.split("\n")
+        cleaned = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
+    
+    try:
+        parsed = json.loads(cleaned)
+    except json.JSONDecodeError:
+        import re
+        match = re.search(r'\{[^{}]*\}', cleaned, re.DOTALL)
+        if match:
+            try:
+                parsed = json.loads(match.group())
+            except json.JSONDecodeError:
+                logger.warning(f"Could not parse health check response: {raw[:200]}")
+                return None
+        else:
+            return None
+    
+    # Validate required fields
+    result = {
+        "thesis_status": parsed.get("thesis_status", "UNKNOWN"),
+        "thesis_assessment": parsed.get("thesis_assessment", ""),
+        "kill_signals_triggered": parsed.get("kill_signals_triggered", []),
+        "new_risks": parsed.get("new_risks", []),
+        "overall_action": parsed.get("overall_action", "HOLD"),
+        "confidence": float(parsed.get("confidence", 0.5)),
+        "summary": parsed.get("summary", ""),
+    }
+    
+    return result
+
+
 def test_connection(config: dict = None) -> tuple[bool, str]:
     """Test the LLM connection. Returns (success, message)."""
     cfg = config or load_config()
