@@ -174,9 +174,11 @@ elif page == "👀 Watchlist":
             if data:
                 scored = score_company(data)
                 upsert_scan(conn, scored)
+                price_val = scored.get("price")
                 conn.execute("UPDATE watchlist SET score=?, max_score=?, last_price=?, last_checked=datetime('now'), updated_at=datetime('now') WHERE ticker=?",
-                             (scored["total_score"], scored["max_score"], scored.get("price"), t["ticker"]))
+                             (scored["total_score"], scored["max_score"], price_val, t["ticker"]))
                 updated += 1
+                conn.commit()
             progress.progress((i + 1) / len(wl_tickers), text=f"{i+1}/{len(wl_tickers)} — {t['ticker']}")
         st.success(f"Updated {updated}/{len(wl_tickers)} companies")
         st.rerun()
@@ -226,15 +228,16 @@ elif page == "👀 Watchlist":
                 col1, col2, col3, col4 = st.columns(4)
                 with col1:
                     # Current price + buy-under comparison
-                    cur_price = row["last_price"] if row["last_price"] else None
-                    if cur_price and row["buy_under"]:
-                        pct_below = (row["buy_under"] - cur_price) / cur_price * 100
-                        if cur_price <= row["buy_under"]:
-                            st.write(f"**💵 Price:** ${cur_price:.2f} 🟢")
+                    cur_price = row["last_price"]
+                    if cur_price is not None and cur_price > 0:
+                        if row["buy_under"]:
+                            pct_below = (row["buy_under"] - cur_price) / cur_price * 100
+                            if cur_price <= row["buy_under"]:
+                                st.write(f"**💵 Price:** ${cur_price:.2f} 🟢")
+                            else:
+                                st.write(f"**💵 Price:** ${cur_price:.2f} 🔴 ({pct_below:+.0f}% to buy)")
                         else:
-                            st.write(f"**💵 Price:** ${cur_price:.2f} 🔴 ({pct_below:+.0f}% to buy)")
-                    elif cur_price:
-                        st.write(f"**💵 Price:** ${cur_price:.2f}")
+                            st.write(f"**💵 Price:** ${cur_price:.2f}")
                     else:
                         st.write("**💵 Price:** —")
                 with col2:
@@ -266,6 +269,7 @@ elif page == "👀 Watchlist":
                                 upsert_scan(conn, scored)
                                 conn.execute("UPDATE watchlist SET score=?, max_score=?, last_price=?, last_checked=datetime('now'), updated_at=datetime('now') WHERE ticker=?",
                                              (scored["total_score"], scored["max_score"], scored.get("price"), row["ticker"]))
+                                conn.commit()
                                 # Auto-calculate buy-under if not set
                                 if not row["buy_under"]:
                                     bu = calculate_buy_under(row["ticker"], data)
