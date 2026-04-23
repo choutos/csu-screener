@@ -173,6 +173,14 @@ def ibkr_scan(scanner_type: str = "high_margins") -> list[dict] | None:
     """Use IBKR's built-in scanner. Only works when Gateway is connected."""
     if not is_ib_available():
         return None
+    # Ensure event loop exists (Streamlit thread compat)
+    import asyncio
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_closed():
+            raise RuntimeError
+    except RuntimeError:
+        asyncio.set_event_loop(asyncio.new_event_loop())
     try:
         from ib_insync import IB, ScannerSubscription
         ib = IB()
