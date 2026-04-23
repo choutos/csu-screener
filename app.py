@@ -8,6 +8,7 @@ import streamlit as st
 from db import get_db, add_to_portfolio, add_to_watchlist, move_to_portfolio, move_to_watchlist, remove_from_watchlist, remove_from_portfolio, log_kill_signal, update_portfolio_status, upsert_scan
 from fetcher import fetch_company, score_company
 from smart_fetcher import fetch_company as smart_fetch, calculate_buy_under, get_data_source, is_ib_available
+from llm_advisor import generate_analysis, load_config as load_llm_config, save_config as save_llm_config, test_connection as test_llm_connection
 from discovery import get_api_key, save_api_key, test_fmp_key, run_discovery, get_available_ticker_count, get_index_stats, refresh_index_cache, refresh_etf_holdings, PRESETS, INDEX_SOURCES, ETF_SOURCES, ibkr_scan
 import pandas as pd
 from datetime import datetime
@@ -253,15 +254,14 @@ elif page == "👀 Watchlist":
                         st.write(f"**Kill Signals:** {row['kill_signals'][:80]}{'...' if len(row['kill_signals'])>80 else ''}")
                 
                 # Actions
-                acol1, acol2, acol3, acol4 = st.columns(4)
+                acol1, acol2, acol3, acol4, acol5 = st.columns(5)
                 with acol1:
-                    if st.button(f"📈 Buy → Portfolio", key=f"buy_{row['ticker']}"):
-                        buy_price = st.session_state.get(f"bp_{row['ticker']}", 0)
+                    if st.button(f"📈 Buy →", key=f"buy_{row['ticker']}"):
                         move_to_portfolio(conn, row["ticker"])
                         st.success(f"Moved {row['ticker']} to portfolio!")
                         st.rerun()
                 with acol2:
-                    if st.button(f"🔄 Refresh Data", key=f"ref_{row['ticker']}"):
+                    if st.button(f"🔄 Refresh", key=f"ref_{row['ticker']}"):
                         with st.spinner(f"Fetching {row['ticker']}..."):
                             data = smart_fetch(row["ticker"])
                             if data:
@@ -270,7 +270,6 @@ elif page == "👀 Watchlist":
                                 conn.execute("UPDATE watchlist SET score=?, max_score=?, last_price=?, last_checked=datetime('now'), updated_at=datetime('now') WHERE ticker=?",
                                              (scored["total_score"], scored["max_score"], scored.get("price"), row["ticker"]))
                                 conn.commit()
-                                # Auto-calculate buy-under if not set
                                 if not row["buy_under"]:
                                     bu = calculate_buy_under(row["ticker"], data)
                                     if bu and bu.get("buy_under_per_share"):
@@ -278,11 +277,41 @@ elif page == "👀 Watchlist":
                                                      (bu["buy_under_per_share"], row["ticker"]))
                                 st.rerun()
                 with acol3:
+                    if st.button(f"🧠 Analyze", key=f"ai_{row['ticker']}"):
+                        with st.spinner(f"Analyzing {row['ticker']} with LLM..."):
+                            # Fetch fresh data if needed
+                            scan = conn.execute("SELECT * FROM scan_results WHERE ticker=?", (row["ticker"],)).fetchone()
+                            if scan:
+                                data = dict(scan)
+                            else:
+                                data = smart_fetch(row["ticker"])
+                                if data:
+                                    data = score_company(data)
+                            if data:
+                                analysis = generate_analysis(data)
+                                if analysis:
+                                    updates = []
+                                    if analysis.get("thesis"):
+                                        conn.execute("UPDATE watchlist SET thesis=?, updated_at=datetime('now') WHERE ticker=?",
+                                                     (analysis["thesis"], row["ticker"]))
+                                    if analysis.get("kill_signals"):
+                                        conn.execute("UPDATE watchlist SET kill_signals=?, updated_at=datetime('now') WHERE ticker=?",
+                                                     (analysis["kill_signals"], row["ticker"]))
+                                    if analysis.get("buy_under"):
+                                        conn.execute("UPDATE watchlist SET buy_under=?, updated_at=datetime('now') WHERE ticker=?",
+                                                     (analysis["buy_under"], row["ticker"]))
+                                    conn.commit()
+                                    st.success(f"🧠 Analysis saved for {row['ticker']}!")
+                                    st.rerun()
+                                else:
+                                    st.error("LLM analysis failed. Check Settings → LLM Advisor.")
+                            else:
+                                st.warning("No data to analyze. Refresh first.")
+                with acol4:
                     if st.button(f"🗑️ Remove", key=f"wr_{row['ticker']}"):
                         remove_from_watchlist(conn, row["ticker"])
                         st.rerun()
-                with acol4:
-                    # Quick update buy-under
+                with acol5:
                     new_bu = st.number_input("Buy Under", value=float(row["buy_under"]) if row["buy_under"] else 0.0,
                                              key=f"bu_{row['ticker']}", step=1.0)
                     if new_bu != (row["buy_under"] or 0) and new_bu > 0:
@@ -533,8 +562,25 @@ elif page == "🧭 Discovery":
                                 add_to_watchlist(conn, r['ticker'], r.get('name', ''),
                                                 score=score, max_score=max_score, source=f"discovery_{preset_key}",
                                                 sector=r.get('sector', ''), industry=r.get('industry', ''))
+                                # Auto-generate thesis & kill signals via LLM
+                                analysis = generate_analysis(r)
+                                if analysis:
+                                    updates = []
+                                    if analysis.get("thesis"):
+                                        updates.append("thesis=?")
+                                    if analysis.get("kill_signals"):
+                                        updates.append("kill_signals=?")
+                                    if analysis.get("buy_under"):
+                                        updates.append("buy_under=?")
+                                    if updates:
+                                        vals = []
+                                        for k in ["thesis", "kill_signals", "buy_under"]:
+                                            if analysis.get(k):
+                                                vals.append(analysis[k])
+                                        vals.append(r['ticker'])
+                                        conn.execute(f"UPDATE watchlist SET {', '.join(updates)}, updated_at=datetime('now') WHERE ticker=?", vals)
                                 conn.commit()
-                                st.success(f"Added {r['ticker']} to watchlist!")
+                                st.success(f"Added {r['ticker']} to watchlist!{' 🧠 Analysis generated' if analysis else ''}")
                                 st.rerun()
                     
                     # Key metrics row
@@ -640,6 +686,52 @@ elif page == "⚙️ Settings":
                                 priority=info["priority"], thesis=info["thesis"], source="deep_dive")
         st.success(f"Seeded {len(seed_data)} tickers to watchlist!")
         st.rerun()
+    
+    st.markdown("---")
+    
+    # ── LLM Advisor Settings ──
+    st.subheader("🧠 LLM Advisor")
+    st.caption("Configure an LLM to auto-generate thesis, kill signals, and buy-under prices.")
+    
+    llm_cfg = load_llm_config()
+    
+    llm_enabled = st.checkbox("Enable LLM Advisor", value=llm_cfg.get("enabled", True), key="llm_enabled")
+    
+    llm_col1, llm_col2 = st.columns(2)
+    with llm_col1:
+        llm_provider = st.selectbox("Provider", ["ollama", "litellm", "openai", "custom"],
+                                    index=["ollama", "litellm", "openai", "custom"].index(llm_cfg.get("provider", "ollama")),
+                                    key="llm_provider")
+        llm_model = st.text_input("Model", value=llm_cfg.get("model", "glm-5.1:cloud"), key="llm_model")
+    with llm_col2:
+        llm_base_url = st.text_input("Base URL", value=llm_cfg.get("base_url", "http://localhost:11434/v1"), key="llm_base_url")
+        llm_api_key = st.text_input("API Key", value=llm_cfg.get("api_key", ""), type="password", key="llm_api_key")
+    
+    llm_btn_col1, llm_btn_col2 = st.columns(2)
+    with llm_btn_col1:
+        if st.button("💾 Save LLM Settings"):
+            save_llm_config({
+                "provider": llm_provider,
+                "base_url": llm_base_url,
+                "model": llm_model,
+                "api_key": llm_api_key,
+                "enabled": llm_enabled,
+            })
+            st.success("LLM settings saved!")
+    with llm_btn_col2:
+        if st.button("🧪 Test Connection"):
+            test_cfg = {
+                "provider": llm_provider,
+                "base_url": llm_base_url,
+                "model": llm_model,
+                "api_key": llm_api_key,
+                "enabled": llm_enabled,
+            }
+            ok, msg = test_llm_connection(test_cfg)
+            if ok:
+                st.success(msg)
+            else:
+                st.error(msg)
     
     st.markdown("---")
     
