@@ -208,8 +208,7 @@ elif page == "👀 Watchlist":
                 col1, col2, col3, col4 = st.columns(4)
                 with col1:
                     # Current price + buy-under comparison
-                    scan = conn.execute("SELECT price FROM scan_results WHERE ticker=?", (row['ticker'],)).fetchone()
-                    cur_price = scan["price"] if scan else None
+                    cur_price = row["last_price"] if row["last_price"] else None
                     if cur_price and row["buy_under"]:
                         pct_below = (row["buy_under"] - cur_price) / cur_price * 100
                         if cur_price <= row["buy_under"]:
@@ -247,8 +246,8 @@ elif page == "👀 Watchlist":
                             if data:
                                 scored = score_company(data)
                                 upsert_scan(conn, scored)
-                                conn.execute("UPDATE watchlist SET score=?, max_score=?, last_checked=datetime('now'), updated_at=datetime('now') WHERE ticker=?",
-                                             (scored["total_score"], scored["max_score"], row["ticker"]))
+                                conn.execute("UPDATE watchlist SET score=?, max_score=?, last_price=?, last_checked=datetime('now'), updated_at=datetime('now') WHERE ticker=?",
+                                             (scored["total_score"], scored["max_score"], scored.get("price"), row["ticker"]))
                                 # Auto-calculate buy-under if not set
                                 if not row["buy_under"]:
                                     bu = calculate_buy_under(row["ticker"], data)

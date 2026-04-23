@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS watchlist (
     source TEXT,  -- how we found it
     first_tracked TEXT DEFAULT (datetime('now')),
     last_checked TEXT DEFAULT (datetime('now')),
+    last_price REAL,
     notes TEXT,
     created_at TEXT DEFAULT (datetime('now')),
     updated_at TEXT DEFAULT (datetime('now'))
@@ -100,6 +101,11 @@ def get_db() -> sqlite3.Connection:
 def init_db():
     conn = get_db()
     conn.executescript(SCHEMA)
+    # Migrations for existing DBs
+    try:
+        conn.execute("ALTER TABLE watchlist ADD COLUMN last_price REAL")
+    except Exception:
+        pass  # column already exists
     conn.close()
 
 
