@@ -51,25 +51,29 @@ def test_fmp_key(key: str) -> tuple[bool, str]:
 
 # ─── Index Constituents (Free — No API Key) ───────────────────────────────────
 
+def _fetch_wikipedia_tickers(url: str) -> list[str]:
+    """Fetch tickers from a Wikipedia page. Uses proper User-Agent."""
+    import pandas as pd
+    from io import StringIO
+    headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"}
+    r = requests.get(url, headers=headers, timeout=15)
+    r.raise_for_status()
+    tables = pd.read_html(StringIO(r.text))
+    return tables[0]["Symbol"].str.replace(".", "-").tolist()
+
+
 def get_sp500_tickers() -> list[str]:
     """Get S&P 500 tickers from Wikipedia."""
     try:
-        import pandas as pd
-        tables = pd.read_html("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies")
-        df = tables[0]
-        return df["Symbol"].str.replace(".", "-").tolist()
+        return _fetch_wikipedia_tickers("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies")
     except Exception:
-        # Fallback hardcoded list
         return _get_cached_tickers("sp500")
 
 
 def get_sp400_tickers() -> list[str]:
     """Get S&P 400 mid-cap tickers from Wikipedia."""
     try:
-        import pandas as pd
-        tables = pd.read_html("https://en.wikipedia.org/wiki/List_of_S%26P_400_companies")
-        df = tables[0]
-        return df["Symbol"].str.replace(".", "-").tolist()
+        return _fetch_wikipedia_tickers("https://en.wikipedia.org/wiki/List_of_S%26P_400_companies")
     except Exception:
         return _get_cached_tickers("sp400")
 
@@ -77,10 +81,7 @@ def get_sp400_tickers() -> list[str]:
 def get_sp600_tickers() -> list[str]:
     """Get S&P 600 small-cap tickers from Wikipedia."""
     try:
-        import pandas as pd
-        tables = pd.read_html("https://en.wikipedia.org/wiki/List_of_S%26P_600_companies")
-        df = tables[0]
-        return df["Symbol"].str.replace(".", "-").tolist()
+        return _fetch_wikipedia_tickers("https://en.wikipedia.org/wiki/List_of_S%26P_600_companies")
     except Exception:
         return _get_cached_tickers("sp600")
 

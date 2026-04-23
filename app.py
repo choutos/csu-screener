@@ -485,7 +485,10 @@ elif page == "🧭 Discovery":
         if api_key:
             if st.button("🧪 Test FMP Key"):
                 ok, msg = test_fmp_key(api_key)
-                st.info(msg) if ok else st.error(msg)
+                if ok:
+                    st.success(msg)
+                else:
+                    st.error(msg)
     
     conn.close()
 
