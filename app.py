@@ -67,6 +67,8 @@ if page == "📊 Portfolio":
                     if not name or not sector or not industry:
                         fetched = smart_fetch(ticker)
                         if fetched:
+                            # Use resolved ticker (e.g. CSU → CSU.TO) for storage
+                            ticker = fetched.get("ticker", ticker)
                             name = name or fetched.get("name", "")
                             sector = sector or fetched.get("sector", "")
                             industry = industry or fetched.get("industry", "")
@@ -313,6 +315,8 @@ elif page == "👀 Watchlist":
                 if not wn or not wsect or not wind:
                     fetched = smart_fetch(wt)
                     if fetched:
+                        # Use resolved ticker (e.g. CSU → CSU.TO) for storage
+                        wt = fetched.get("ticker", wt)
                         wn = wn or fetched.get("name", "")
                         wsect = wsect or fetched.get("sector", "")
                         wind = wind or fetched.get("industry", "")
@@ -572,6 +576,8 @@ elif page == "🧭 Discovery":
                 with st.spinner(f"Fetching {t}..."):
                     data = smart_fetch(t)
                     if data:
+                        # Use resolved ticker (e.g. CSU → CSU.TO) so downstream works
+                        t = data.get("ticker", t)
                         scored = score_company(data)
                         bu = calculate_buy_under(t, data)
                         if bu:

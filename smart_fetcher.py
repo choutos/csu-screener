@@ -97,12 +97,53 @@ def _should_try_ibkr() -> bool:
             and is_ib_available())
 
 
+# ─── Canadian Ticker Resolution ──────────────────────────────────────────────
+
+# Suffixes to try when a bare ticker fails on yfinance.
+# .TO = Toronto Stock Exchange (TSX), .V = TSX Venture Exchange (TSXV).
+_CANADIAN_SUFFIXES = (".TO", ".V")
+
+
+def _has_exchange_suffix(ticker: str) -> bool:
+    """Return True if the ticker already contains an exchange suffix (e.g. .TO, .L)."""
+    return "." in ticker
+
+
+def _try_yfinance_variants(ticker: str) -> Optional[dict]:
+    """Try fetching *ticker* from yfinance, then Canadian-suffixed variants.
+
+    Returns the first successful result (with the resolved ticker stored in
+    data["ticker"]) or None.
+    """
+    # 1. Try the ticker as-is first.
+    data = _fetch_from_yfinance(ticker)
+    if data:
+        return data
+
+    # 2. If the ticker already has an exchange suffix, don't guess further.
+    if _has_exchange_suffix(ticker):
+        return None
+
+    # 3. Try Canadian exchange suffixes.
+    for suffix in _CANADIAN_SUFFIXES:
+        candidate = ticker + suffix
+        data = _fetch_from_yfinance(candidate)
+        if data:
+            logger.info(f"Resolved bare ticker {ticker} → {candidate}")
+            return data
+
+    return None
+
+
 # ─── Unified Fetch Interface ──────────────────────────────────────────────────
 
 def fetch_company(ticker: str) -> Optional[dict]:
     """
     Fetch company data. Uses yfinance by default.
     Set CSU_USE_IBKR=1 env var to try IB Gateway first.
+
+    For bare tickers (no exchange suffix) that fail on the first attempt,
+    Canadian suffixes (.TO, .V) are tried automatically.
     """
     if _should_try_ibkr():
         data = _fetch_from_ibkr(ticker)
@@ -113,8 +154,8 @@ def fetch_company(ticker: str) -> Optional[dict]:
             data["data_source"] = "ibkr"
             return data
         # IBKR gave partial data — fall back
-    
-    data = _fetch_from_yfinance(ticker)
+
+    data = _try_yfinance_variants(ticker)
     if data:
         data["data_source"] = "yfinance"
     return data
