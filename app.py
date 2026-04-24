@@ -15,6 +15,45 @@ import pandas as pd
 from datetime import datetime
 from pathlib import Path
 
+
+def _needs_metadata_backfill(row):
+    """True when a stored row has no proper human-readable name (or sector/industry)."""
+    name = (row["name"] or "").strip()
+    ticker = (row["ticker"] or "").strip()
+    # Name is blank or identical to the ticker symbol → needs backfill
+    if not name or name.upper() == ticker.upper():
+        return True
+    # Also backfill if sector/industry are both empty
+    if not (row.get("sector") or "").strip() and not (row.get("industry") or "").strip():
+        return True
+    return False
+
+
+def _backfill_metadata(conn, table, ticker, fetched):
+    """Update name/sector/industry from *fetched* data when the stored row is lacking them.
+
+    Only overwrites blank or ticker-equal fields; never clobbers a proper human name.
+    """
+    row = conn.execute(f"SELECT name, sector, industry FROM {table} WHERE ticker=?", (ticker,)).fetchone()
+    if not row:
+        return
+    updates, vals = [], []
+    stored_name = (row["name"] or "").strip()
+    fetched_name = (fetched.get("name") or "").strip()
+    if fetched_name and (not stored_name or stored_name.upper() == ticker.upper()):
+        updates.append("name=?")
+        vals.append(fetched_name)
+    if fetched.get("sector") and not (row["sector"] or "").strip():
+        updates.append("sector=?")
+        vals.append(fetched["sector"])
+    if fetched.get("industry") and not (row["industry"] or "").strip():
+        updates.append("industry=?")
+        vals.append(fetched["industry"])
+    if updates:
+        vals.append(ticker)
+        conn.execute(f"UPDATE {table} SET {', '.join(updates)}, updated_at=datetime('now') WHERE ticker=?", vals)
+
+
 # ─── Shared DB connection (singleton) ───────────────────────────────────────────
 @st.cache_resource
 def _get_shared_db():
@@ -197,6 +236,7 @@ if page == "📊 Portfolio":
                         if data:
                             scored = score_company(data)
                             upsert_scan(conn, scored)
+                            _backfill_metadata(conn, "portfolio", row["ticker"], scored)
                             result = check_portfolio_health(scored, row["thesis"], row["kill_signals"])
                             if result:
                                 st.session_state[f"hc_result_{row['ticker']}"] = result
@@ -282,6 +322,7 @@ elif page == "👀 Watchlist":
             if data:
                 scored = score_company(data)
                 upsert_scan(conn, scored)
+                _backfill_metadata(conn, "watchlist", t["ticker"], scored)
                 price_val = scored.get("price")
                 conn.execute("UPDATE watchlist SET score=?, max_score=?, last_price=?, last_checked=datetime('now'), updated_at=datetime('now'), score_breakdown=? WHERE ticker=?",
                              (scored["total_score"], scored["max_score"], price_val, json.dumps({"scores": scored.get("scores", {}), "passes": scored.get("passes", {})}), t["ticker"]))
@@ -431,6 +472,7 @@ elif page == "👀 Watchlist":
                             if data:
                                 scored = score_company(data)
                                 upsert_scan(conn, scored)
+                                _backfill_metadata(conn, "watchlist", row["ticker"], scored)
                                 breakdown_json = json.dumps({"scores": scored.get("scores", {}), "passes": scored.get("passes", {})})
                                 conn.execute("UPDATE watchlist SET score=?, max_score=?, last_price=?, last_checked=datetime('now'), updated_at=datetime('now'), score_breakdown=? WHERE ticker=?",
                                              (scored["total_score"], scored["max_score"], scored.get("price"), breakdown_json, row["ticker"]))
@@ -453,6 +495,7 @@ elif page == "👀 Watchlist":
                                 if data:
                                     data = score_company(data)
                             if data:
+                                _backfill_metadata(conn, "watchlist", row["ticker"], data)
                                 analysis = generate_analysis(data)
                                 if analysis:
                                     updates = []
