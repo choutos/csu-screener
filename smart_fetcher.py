@@ -109,11 +109,16 @@ def _has_exchange_suffix(ticker: str) -> bool:
     return "." in ticker
 
 
-def _try_yfinance_variants(ticker: str) -> Optional[dict]:
+def _try_yfinance_variants(ticker: str, *, discovery_mode: bool = False) -> Optional[dict]:
     """Try fetching *ticker* from yfinance, then Canadian-suffixed variants.
 
     Returns the first successful result (with the resolved ticker stored in
     data["ticker"]) or None.
+
+    When *discovery_mode* is True, skip Canadian suffix guessing — discovery
+    batch scans already have correctly-suffixed tickers from the index cache,
+    so guessing .TO/.V on e.g. Australian or European tickers just creates
+    noise.
     """
     # 1. Try the ticker as-is first.
     data = _fetch_from_yfinance(ticker)
@@ -124,7 +129,11 @@ def _try_yfinance_variants(ticker: str) -> Optional[dict]:
     if _has_exchange_suffix(ticker):
         return None
 
-    # 3. Try Canadian exchange suffixes.
+    # 3. In discovery mode, don't guess cross-exchange suffixes.
+    if discovery_mode:
+        return None
+
+    # 4. Try Canadian exchange suffixes (manual / single-ticker flows only).
     for suffix in _CANADIAN_SUFFIXES:
         candidate = ticker + suffix
         data = _fetch_from_yfinance(candidate)
@@ -137,13 +146,15 @@ def _try_yfinance_variants(ticker: str) -> Optional[dict]:
 
 # ─── Unified Fetch Interface ──────────────────────────────────────────────────
 
-def fetch_company(ticker: str) -> Optional[dict]:
+def fetch_company(ticker: str, *, discovery_mode: bool = False) -> Optional[dict]:
     """
     Fetch company data. Uses yfinance by default.
     Set CSU_USE_IBKR=1 env var to try IB Gateway first.
 
     For bare tickers (no exchange suffix) that fail on the first attempt,
-    Canadian suffixes (.TO, .V) are tried automatically.
+    Canadian suffixes (.TO, .V) are tried automatically — unless
+    *discovery_mode* is True, which skips cross-exchange guessing to avoid
+    noisy failures during batch scans.
     """
     if _should_try_ibkr():
         data = _fetch_from_ibkr(ticker)
@@ -155,7 +166,7 @@ def fetch_company(ticker: str) -> Optional[dict]:
             return data
         # IBKR gave partial data — fall back
 
-    data = _try_yfinance_variants(ticker)
+    data = _try_yfinance_variants(ticker, discovery_mode=discovery_mode)
     if data:
         data["data_source"] = "yfinance"
     return data
