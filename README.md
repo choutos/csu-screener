@@ -21,15 +21,19 @@ The app opens at `http://localhost:8501` by default.
 ## Architecture Overview
 
 ```
-┌─────────────────────────────────────────────────────┐
-│  app.py  —  Streamlit UI (4 pages + sidebar)        │
-│  Uses @st.cache_resource DB singleton               │
-├────────────┬────────────┬────────────────┬──────────┤
-│ Portfolio  │ Watchlist  │ Discovery      │ Settings │
-│            │            │ (Manual + Index)          │
-└────┬───────┴──────┬─────┴───────┬────────┴─────┬────┘
-     │              │             │              │
-┌────▼──────────────▼─────────────▼──────────────▼────┐
+┌──────────────────────────────────────────────────────┐
+│  app.py  —  Thin entrypoint / router                 │
+│  Page config, sidebar, dispatches to pages/*         │
+├──────────────────────────────────────────────────────┤
+│  pages/                                              │
+│  ┌────────────┬────────────┬─────────────┬──────────┐│
+│  │portfolio.py│watchlist.py│discovery.py │settings.py│
+│  │            │            │(Manual+Index)│          │
+│  └────────────┴────────────┴─────────────┴──────────┘│
+│  pages/helpers.py  —  shared DB singleton + UI utils │
+└────┬───────┬──────────┬──────────────┬───────────────┘
+     │       │          │              │
+┌────▼───────▼──────────▼──────────────▼──────────────┐
 │  db.py  —  SQLite layer (5 tables, WAL mode)        │
 └────────────────────┬────────────────────────────────┘
                      │
@@ -53,11 +57,16 @@ The app opens at `http://localhost:8501` by default.
 
 | File | Lines | Purpose |
 |------|-------|---------|
-| `app.py` | ~940 | Streamlit UI — 4 dashboards, sidebar navigation, manual scan merged into Discovery |
+| `app.py` | ~30 | Thin Streamlit entrypoint — page config, sidebar, route dispatch |
+| `pages/portfolio.py` | ~200 | Portfolio dashboard UI |
+| `pages/watchlist.py` | ~190 | Watchlist dashboard UI |
+| `pages/discovery.py` | ~350 | Discovery dashboard UI (manual scan + index discovery) |
+| `pages/settings.py` | ~130 | Settings dashboard UI |
+| `pages/helpers.py` | ~40 | Shared DB singleton + score breakdown UI helpers |
 | `db.py` | ~220 | SQLite database layer — schema, CRUD, migrations |
 | `fetcher.py` | ~173 | Yahoo Finance fetcher + 8-KPI quality scoring engine |
 | `smart_fetcher.py` | ~452 | Dual-source fetcher (yfinance default, IBKR opt-in), batch fetch, buy-under calculator |
-| `discovery.py` | ~421 | Market discovery — index/ETF screening, FMP API, preset scans |
+| `discovery.py` | ~421 | Market discovery engine — index/ETF screening, FMP API, preset scans |
 | `llm_advisor.py` | ~387 | LLM integration — thesis generation, health checks, config |
 | `kill_signal_scanner.py` | ~360 | Standalone kill signal scanner (CLI/Telegram), baseline tracking |
 
@@ -223,10 +232,11 @@ Just change `base_url`, `model`, and `api_key` in Settings.
 ## Development Notes
 
 ### Adding or Changing a Dashboard Section
-1. Update the sidebar options in the `# ─── Sidebar` section of `app.py`
-2. Add or edit the relevant rendering block in `app.py` (the UI is still a single-file script)
-3. If the change belongs in Discovery, decide whether it fits **✏️ Manual Scan**, **🧭 Index Discovery**, or the shared **Previous Scan Results** area
-4. Use `conn = _get_shared_db()` (the `@st.cache_resource` singleton) — never call `get_db()` directly
+1. Update the sidebar options in `app.py` if you are adding a brand-new top-level dashboard
+2. Implement or edit the UI in the relevant `pages/*.py` module
+3. Put shared presentation helpers in `pages/helpers.py` instead of duplicating widget logic across pages
+4. If the change belongs in Discovery, decide whether it fits **✏️ Manual Scan**, **🧭 Index Discovery**, or the shared **Previous Scan Results** area
+5. Use `get_shared_db()` from `pages/helpers.py` for the cached DB connection — never create ad-hoc Streamlit DB singletons per page
 
 ### Streamlit Gotchas
 - **`st.rerun()` destroys all local variables** — persist data in `st.session_state` if it needs to survive
