@@ -115,7 +115,7 @@ Config stored in `llm_config.json`, editable via Settings page.
 ### SQLite
 - **Always `conn.commit()` after writes.** Forgetting this is the #1 bug.
 - **Single-element tuples need trailing comma:** `(value,)` not `(value)`. Without it, Python treats parens as grouping, not a tuple → SQLite iterates string characters.
-- **`@st.cache_resource`** for the DB connection in `app.py` — one connection shared across all reruns.
+- **`@st.cache_resource`** lives in `pages/helpers.py` via `get_shared_db()` — use that single shared connection across all reruns.
 - **`check_same_thread=False`** required because Streamlit reruns happen in different threads.
 - **WAL mode** enabled for concurrent read/write.
 
