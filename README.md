@@ -22,13 +22,14 @@ The app opens at `http://localhost:8501` by default.
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│  app.py  —  Streamlit UI (5 pages + sidebar)        │
+│  app.py  —  Streamlit UI (4 pages + sidebar)        │
 │  Uses @st.cache_resource DB singleton               │
-├─────────┬──────────┬──────────┬──────────┬──────────┤
-│ Portfolio│Watchlist │ Scanner  │Discovery │ Settings  │
-└────┬────┴────┬─────┴────┬─────┴────┬─────┴─────┬────┘
-     │         │          │          │           │
-┌────▼─────────▼──────────▼──────────▼───────────▼────┐
+├────────────┬────────────┬────────────────┬──────────┤
+│ Portfolio  │ Watchlist  │ Discovery      │ Settings │
+│            │            │ (Manual + Index)          │
+└────┬───────┴──────┬─────┴───────┬────────┴─────┬────┘
+     │              │             │              │
+┌────▼──────────────▼─────────────▼──────────────▼────┐
 │  db.py  —  SQLite layer (5 tables, WAL mode)        │
 └────────────────────┬────────────────────────────────┘
                      │
@@ -52,7 +53,7 @@ The app opens at `http://localhost:8501` by default.
 
 | File | Lines | Purpose |
 |------|-------|---------|
-| `app.py` | ~825 | Streamlit UI — all 5 dashboard pages, sidebar navigation |
+| `app.py` | ~940 | Streamlit UI — 4 dashboards, sidebar navigation, manual scan merged into Discovery |
 | `db.py` | ~220 | SQLite database layer — schema, CRUD, migrations |
 | `fetcher.py` | ~173 | Yahoo Finance fetcher + 8-KPI quality scoring engine |
 | `smart_fetcher.py` | ~452 | Dual-source fetcher (yfinance default, IBKR opt-in), batch fetch, buy-under calculator |
@@ -60,7 +61,7 @@ The app opens at `http://localhost:8501` by default.
 | `llm_advisor.py` | ~387 | LLM integration — thesis generation, health checks, config |
 | `kill_signal_scanner.py` | ~360 | Standalone kill signal scanner (CLI/Telegram), baseline tracking |
 
-## The 5 Dashboards
+## The 4 Dashboards
 
 ### 📊 Portfolio
 Track current holdings. Each position has:
@@ -80,17 +81,13 @@ Companies you're tracking but haven't bought yet. Each entry has:
 - **📈 Buy →** — Two-step inline form to move to Portfolio (pre-fills buy price from last price)
 - **🔄 Refresh** — Update price and metrics from data source
 
-### 🔍 Scanner
-Quick-scan individual tickers via Yahoo Finance. Shows:
-- 8-KPI quality score (0–24)
-- Full financial metrics (margins, growth, debt, size)
-- Quick actions: add to watchlist or portfolio
-
 ### 🧭 Discovery
-Batch screening across market indices and ETFs. Features:
-- **7 presets** (quality_compounders, deep_value, wide_moat, small_cap_quality, europe_quality, europe_small_cap, asia_pacific)
-- **16 index sources** (S&P 500/400/600, FTSE 100/250, DAX, CAC, AEX, IBEX, FTSE MIB, SMI, OMX, Nikkei, ASX)
-- **14 ETF sources** (regional and factor ETFs)
+Batch screening and manual ticker scans in one place. Features:
+- **Two tabs:** **✏️ Manual Scan** for ad-hoc ticker checks and **🧭 Index Discovery** for batch screening
+- **Previous Scan Results** expander above the tabs for reviewing cached results regardless of active mode
+- **10 presets** (quality_compounders, deep_value, wide_moat, small_cap_quality, europe_quality, europe_small_cap, canada_quality, canada_small_cap, asia_pacific, full_universe)
+- **17 index sources** spanning the US, Europe, Canada, and Asia-Pacific (S&P 500/400/600, FTSE 100/250, DAX, MDAX, CAC, AEX, IBEX, FTSE MIB, SMI, OMX, Nikkei, ASX, TSX 60, TSX Composite)
+- **18 ETF sources** including Canadian ETFs
 - FMP API key for enhanced screening (optional, works without)
 - Auto-analyzes and generates thesis when adding to watchlist
 
@@ -210,7 +207,7 @@ Just change `base_url`, `model`, and `api_key` in Settings.
 ### Weekly
 1. 🧭 Discovery: run a preset scan
 2. 👀 Watchlist: refresh prices, review new entries
-3. 🔍 Scanner: deep-dive 2–3 interesting tickers
+3. ✏️ Discovery → Manual Scan: deep-dive 2–3 interesting tickers
 
 ### Monthly
 1. 📊 Portfolio: run 🩺 Health Check on all positions
@@ -225,10 +222,11 @@ Just change `base_url`, `model`, and `api_key` in Settings.
 
 ## Development Notes
 
-### Adding a New Page
-1. Add a new sidebar option in the `# ─── Sidebar` section of `app.py`
-2. Add the page rendering block following the same pattern as existing pages
-3. Use `conn = _get_shared_db()` (the `@st.cache_resource` singleton) — never call `get_db()` directly
+### Adding or Changing a Dashboard Section
+1. Update the sidebar options in the `# ─── Sidebar` section of `app.py`
+2. Add or edit the relevant rendering block in `app.py` (the UI is still a single-file script)
+3. If the change belongs in Discovery, decide whether it fits **✏️ Manual Scan**, **🧭 Index Discovery**, or the shared **Previous Scan Results** area
+4. Use `conn = _get_shared_db()` (the `@st.cache_resource` singleton) — never call `get_db()` directly
 
 ### Streamlit Gotchas
 - **`st.rerun()` destroys all local variables** — persist data in `st.session_state` if it needs to survive
