@@ -4,7 +4,7 @@ Auto-discovers quality companies using multiple free sources.
 
 Sources (auto-detected):
 1. IBKR Scanner (when Gateway is running) — global, all markets
-2. ETF Holdings (yfinance) — pull constituents from thematic ETFs
+2. ETF Holdings (iShares/BlackRock CSV) — pull constituents from issuer holdings files
 3. Wikipedia Index Constituents — S&P, FTSE, DAX, CAC, etc.
 4. Nikkei official CSV — authoritative constituent list from indexes.nikkei.co.jp
    Primary: current-day components CSV; Secondary: weights CSV; Last resort: hardcoded list
@@ -13,6 +13,7 @@ No API key required for basic discovery.
 """
 import csv
 import io
+import re
 import requests
 import json
 from db import get_db, upsert_scan
@@ -110,6 +111,30 @@ ETF_SOURCES = {
     "XMD": {"label": "iShares S&P/TSX MidCap", "region": "CA", "cap": "mid"},
     "XCS": {"label": "iShares S&P/TSX SmallCap", "region": "CA", "cap": "small"},
     "EWC": {"label": "iShares MSCI Canada", "region": "CA", "cap": "large"},
+}
+
+# ─── iShares / BlackRock product page URLs ───────────────────────────────────
+# Used to locate the official holdings CSV for each ETF.
+_ISHARES_PRODUCT_URLS: dict[str, str] = {
+    # US-listed iShares  (ishares.com direct CSV pattern)
+    "SCZ":  "https://www.ishares.com/us/products/239626/ishares-msci-eafe-smallcap-etf",
+    "EZU":  "https://www.ishares.com/us/products/239623/ishares-msci-emu-etf",
+    "EWG":  "https://www.ishares.com/us/products/239580/ishares-msci-germany-etf",
+    "EWU":  "https://www.ishares.com/us/products/239690/ishares-msci-united-kingdom-etf",
+    "EWQ":  "https://www.ishares.com/us/products/239648/ishares-msci-france-etf",
+    "EWP":  "https://www.ishares.com/us/products/239683/ishares-msci-spain-capped-etf",
+    "EWI":  "https://www.ishares.com/us/products/239664/ishares-msci-italy-etf",
+    "EWD":  "https://www.ishares.com/us/products/239684/ishares-msci-sweden-etf",
+    "EWS":  "https://www.ishares.com/us/products/239685/ishares-msci-switzerland-etf",
+    "IWM":  "https://www.ishares.com/us/products/239710/ishares-russell-2000-etf",
+    "IJR":  "https://www.ishares.com/us/products/239774/ishares-core-sp-smallcap-etf",
+    "QUAL": "https://www.ishares.com/us/products/256101/ishares-msci-usa-quality-factor-etf",
+    "EFAV": "https://www.ishares.com/us/products/239626/ishares-msci-eafe-min-vol-factor-etf",
+    "EWC":  "https://www.ishares.com/us/products/239615/ishares-msci-canada-etf",
+    # Canada-listed BlackRock ETFs (blackrock.com/ca product pages)
+    "XIC":  "https://www.blackrock.com/ca/investors/en/products/239837/ishares-sptsx-capped-composite-index-etf",
+    "XMD":  "https://www.blackrock.com/ca/investors/en/products/239839/ishares-sptsx-midcap-index-etf",
+    "XCS":  "https://www.blackrock.com/ca/investors/en/products/239840/ishares-sptsx-smallcap-index-etf",
 }
 
 
@@ -259,21 +284,86 @@ def refresh_index_cache(indexes: list[str] = None) -> dict[str, int | str]:
     return results
 
 
+def _fetch_ishares_holdings_csv(ticker: str) -> list[str]:
+    """Download and parse the official iShares/BlackRock holdings CSV for *ticker*.
+
+    Strategy:
+      • US iShares (ishares.com): build the direct CSV URL from the product page URL.
+      • Canada BlackRock (blackrock.com/ca): scrape the product page for the CSV href.
+    The CSV files contain a preamble of metadata rows before the actual header row;
+    we detect the header by looking for a "Ticker" column.
+    """
+    product_url = _ISHARES_PRODUCT_URLS.get(ticker)
+    if product_url is None:
+        return []
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                       "AppleWebKit/537.36 (KHTML, like Gecko) "
+                       "Chrome/125.0.0.0 Safari/537.36",
+    }
+
+    csv_url: str | None = None
+
+    if "ishares.com/us/" in product_url:
+        # Direct CSV pattern for US iShares:
+        # <product_url>/1467271812596.ajax?fileType=csv&fileName=<TICKER>_holdings&dataType=fund
+        csv_url = (
+            f"{product_url}/1467271812596.ajax"
+            f"?fileType=csv&fileName={ticker}_holdings&dataType=fund"
+        )
+    elif "blackrock.com/ca/" in product_url:
+        # Scrape the product page for the holdings CSV link
+        resp = requests.get(product_url, headers=headers, timeout=30)
+        resp.raise_for_status()
+        match = re.search(r'href="([^"]*?\.ajax\?fileType=csv[^"]*)"', resp.text)
+        if match:
+            href = match.group(1)
+            csv_url = href if href.startswith("http") else f"https://www.blackrock.com{href}"
+
+    if csv_url is None:
+        return []
+
+    resp = requests.get(csv_url, headers=headers, timeout=30)
+    resp.raise_for_status()
+
+    # Parse CSV — skip preamble lines until we find the header containing "Ticker"
+    lines = resp.text.splitlines()
+    header_idx = None
+    for i, line in enumerate(lines):
+        if "Ticker" in line:
+            header_idx = i
+            break
+    if header_idx is None:
+        return []
+
+    reader = csv.DictReader(lines[header_idx:])
+    symbols: list[str] = []
+    for row in reader:
+        raw = (row.get("Ticker") or "").strip()
+        if not raw or raw == "-":
+            continue
+        # Basic validity: starts with a letter, only contains typical ticker chars
+        if re.match(r"^[A-Za-z][A-Za-z0-9.\-]{0,15}$", raw):
+            symbols.append(raw)
+    return symbols
+
+
 def refresh_etf_holdings(etfs: list[str] = None) -> dict[str, int | str]:
-    """Fetch and cache ETF holdings via yfinance."""
+    """Fetch and cache ETF holdings from issuer CSV files (iShares/BlackRock)."""
     targets = etfs or list(ETF_SOURCES.keys())
-    results = {}
+    results: dict[str, int | str] = {}
     for etf_ticker in targets:
+        if etf_ticker not in _ISHARES_PRODUCT_URLS:
+            results[etf_ticker] = "unsupported issuer (no iShares/BlackRock source)"
+            continue
         try:
-            import yfinance as yf
-            etf = yf.Ticker(etf_ticker)
-            holdings = etf.info.get("holdings", [])
-            symbols = [h.get("symbol", "") for h in holdings if h.get("symbol")]
+            symbols = _fetch_ishares_holdings_csv(etf_ticker)
             if symbols:
                 _save_cached_tickers(f"etf_{etf_ticker.lower()}", symbols)
                 results[etf_ticker] = len(symbols)
             else:
-                results[etf_ticker] = "no holdings data"
+                results[etf_ticker] = "no holdings found in CSV"
         except Exception as e:
             results[etf_ticker] = f"error: {e}"
     return results
@@ -501,12 +591,9 @@ def run_discovery(preset: str = "quality_compounders",
 
 
 def _fetch_etf_holdings_simple(etf_ticker: str) -> list[str]:
-    """Simple ETF holdings fetch via yfinance."""
+    """Fetch ETF holdings from issuer CSV (iShares/BlackRock). Returns [] on failure."""
     try:
-        import yfinance as yf
-        etf = yf.Ticker(etf_ticker)
-        holdings = etf.info.get("holdings", [])
-        return [h.get("symbol", "") for h in holdings if h.get("symbol")]
+        return _fetch_ishares_holdings_csv(etf_ticker)
     except Exception:
         return []
 

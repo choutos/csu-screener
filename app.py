@@ -656,7 +656,7 @@ elif page == "🧭 Discovery":
                         else:
                             st.success(f"{INDEX_SOURCES.get(k, {}).get('label', k)}: {v} tickers")
         with col2:
-            if st.button("📦 Refresh ETFs", help="Fetch ETF holdings via yfinance"):
+            if st.button("📦 Refresh ETFs", help="Fetch ETF holdings from iShares/BlackRock CSV files"):
                 with st.spinner("Refreshing ETFs..."):
                     counts = refresh_etf_holdings()
                     for k, v in counts.items():
