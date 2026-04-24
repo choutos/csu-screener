@@ -9,38 +9,42 @@ A Streamlit-based investment process app for tracking quality compounder stocks.
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────┐
-│  app.py (Streamlit UI — 4 dashboards)       │
-│  Portfolio | Watchlist | Discovery          │
-│  (Manual + Index) | Settings                │
-└──────────┬──────────┬──────────┬────────────┘
-           │          │          │
-    ┌──────▼──┐ ┌─────▼─────┐ ┌─▼──────────┐
-    │ db.py   │ │smart_     │ │llm_advisor │
-    │ SQLite  │ │fetcher.py │ │.py         │
-    │ layer   │ │yfinance↔  │ │OpenAI-comp.│
-    │         │ │IBKR       │ │API         │
-    └─────────┘ └─────┬─────┘ └────────────┘
-                    │
-              ┌─────▼─────┐
-              │ fetcher.py │
-              │ Scoring    │
-              │ engine     │
-              └───────────┘
+┌──────────────────────────────────────────────────────┐
+│  app.py  — thin Streamlit entrypoint / router        │
+│  page config, sidebar, dispatch to pages/*           │
+├──────────────────────────────────────────────────────┤
+│  pages/                                              │
+│  portfolio.py | watchlist.py | discovery.py | settings.py │
+│  helpers.py — shared DB singleton + UI helpers       │
+└────┬───────────────────────┬───────────────────────┬─┘
+     │                       │                       │
+┌────▼───────┐      ┌────────▼────────┐     ┌────────▼────────┐
+│ db.py      │      │ smart_fetcher.py│     │ llm_advisor.py  │
+│ SQLite     │      │ data access     │     │ LLM integration │
+└────┬───────┘      └────────┬────────┘     └─────────────────┘
+     │                       │
+┌────▼───────────────────────▼───────────────┐
+│ fetcher.py — scoring engine                │
+└────────────────────────────────────────────┘
 ```
 
-**Data flow:** `smart_fetcher` → `fetcher` (scoring) → `db` (persistence) → `app` (display)
+**Data flow:** `smart_fetcher` → `fetcher` (scoring) → `db` (persistence) → `pages/*` → `app`
 **LLM flow:** `llm_advisor` wraps any OpenAI-compatible API (ollama, litellm proxy)
 
 ## Files
 
 | File | Purpose | Key Functions |
 |------|---------|---------------|
-| `app.py` | Streamlit UI, all pages | `portfolio_page()`, `watchlist_page()`, `discovery_page()`, `settings_page()` |
+| `app.py` | Thin Streamlit entrypoint and router | sidebar selection + page dispatch |
+| `pages/portfolio.py` | Portfolio dashboard UI | `render()` |
+| `pages/watchlist.py` | Watchlist dashboard UI | `render()` |
+| `pages/discovery.py` | Discovery dashboard UI | `render()` |
+| `pages/settings.py` | Settings dashboard UI | `render()` |
+| `pages/helpers.py` | Shared page helpers | `get_shared_db()`, `render_score_breakdown()` |
 | `db.py` | SQLite CRUD + migrations | `get_db()`, `init_db()`, `upsert_scan()`, `add_to_watchlist()`, `add_to_portfolio()`, `move_to_portfolio()`, `move_to_watchlist()`, `log_kill_signal()`, `update_portfolio_status()` |
 | `fetcher.py` | Data fetching + scoring | `fetch_company()` → raw data, `score_company()` → scored data with KPI breakdown |
 | `smart_fetcher.py` | yfinance/IBKR abstraction | `smart_fetch()`, `fetch_company()`, `fetch_companies_batch()`, `calculate_buy_under()` |
-| `discovery.py` | Batch screening across indices | `fetch_index_tickers()`, `screen_tickers()`, `run_discovery_scan()` |
+| `discovery.py` | Batch screening engine across indices | `refresh_index_cache()`, `refresh_etf_holdings()`, `run_discovery()` |
 | `llm_advisor.py` | LLM-powered analysis | `generate_analysis()`, `check_portfolio_health()`, `test_connection()`, `load_config()`, `save_config()` |
 | `kill_signal_scanner.py` | Standalone scanner (batch kill signals) | Batch kill signal checks across portfolio |
 
@@ -52,7 +56,7 @@ SQLite at `invest.db`, managed via `db.py`.
 
 **Migrations:** `init_db()` runs `ALTER TABLE` migrations on app startup. Add new columns as `try/except` blocks — SQLite doesn't support `ADD COLUMN IF NOT EXISTS`.
 
-**Connection:** `@st.cache_resource` singleton via `get_db()` in `app.py`. `db.py`'s `get_db()` is the non-cached version for import-time initialization.
+**Connection:** `pages/helpers.py` exposes the `@st.cache_resource` singleton via `get_shared_db()`. `db.py`'s `get_db()` is the non-cached low-level connector.
 
 **Critical:** Always call `conn.commit()` after any INSERT/UPDATE/DELETE. The most common bug in this codebase is forgetting this.
 
@@ -111,7 +115,7 @@ Config stored in `llm_config.json`, editable via Settings page.
 ### SQLite
 - **Always `conn.commit()` after writes.** Forgetting this is the #1 bug.
 - **Single-element tuples need trailing comma:** `(value,)` not `(value)`. Without it, Python treats parens as grouping, not a tuple → SQLite iterates string characters.
-- **`@st.cache_resource`** for the DB connection in `app.py` — one connection shared across all reruns.
+- **`@st.cache_resource`** lives in `pages/helpers.py` via `get_shared_db()` — use that single shared connection across all reruns.
 - **`check_same_thread=False`** required because Streamlit reruns happen in different threads.
 - **WAL mode** enabled for concurrent read/write.
 
@@ -130,7 +134,7 @@ Config stored in `llm_config.json`, editable via Settings page.
 1. **New DB column?** Add `ALTER TABLE` in `init_db()` inside a `try/except` block.
 2. **New button?** Use unique `key=f"btn_{ticker}"` pattern. Guard action with `st.session_state` flag if it triggers a rerun.
 3. **New LLM prompt?** Keep output format explicit and constrained. Add `max_tokens` parameter generously.
-4. **New dashboard section?** Add it to the sidebar radio in `app.py` or fold it into an existing section. For Discovery changes, decide whether they belong in the Manual Scan tab, the Index Discovery tab, or the shared results area.
+4. **New dashboard section?** If it is top-level, add it to the sidebar radio in `app.py`; otherwise place it in the relevant `pages/*.py` module. For Discovery changes, decide whether they belong in the Manual Scan tab, the Index Discovery tab, or the shared results area.
 5. **Always check imports.** Missing `import os`, `import json`, `from pathlib import Path` are a recurring bug.
 6. **Always test with `python3 -c "import ast; ast.parse(open('app.py').read())"`** before pushing.
 
