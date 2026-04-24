@@ -585,18 +585,18 @@ elif page == "🧭 Discovery":
         idx_stats = get_index_stats()
         
         # Group by region
-        regions = {"US": [], "Europe": [], "Asia/Pacific": [], "ETF": []}
-        region_map = {"US": "US", "UK": "Europe", "DE": "Europe", "FR": "Europe", "NL": "Europe", "ES": "Europe", "IT": "Europe", "CH": "Europe", "SE": "Europe", "JP": "Asia/Pacific", "AU": "Asia/Pacific", "EU": "ETF"}
+        regions = {"US": [], "Canada": [], "Europe": [], "Asia/Pacific": [], "ETF": []}
+        region_map = {"US": "US", "CA": "Canada", "UK": "Europe", "DE": "Europe", "FR": "Europe", "NL": "Europe", "ES": "Europe", "IT": "Europe", "CH": "Europe", "SE": "Europe", "JP": "Asia/Pacific", "AU": "Asia/Pacific", "EU": "ETF"}
         
         for key, s in idx_stats.items():
             region = "ETF" if key.startswith("etf_") else region_map.get(s.get("region", "US"), "US")
             regions[region].append((key, s))
         
-        tab_us, tab_eu, tab_ap, tab_etf = st.tabs(["🇺🇸 US", "🇪🇺 Europe", "🌏 Asia/Pacific", "📦 ETFs"])
+        tab_us, tab_ca, tab_eu, tab_ap, tab_etf = st.tabs(["🇺🇸 US", "🍁 Canada", "🇪🇺 Europe", "🌏 Asia/Pacific", "📦 ETFs"])
         
         needs_refresh = any(not s["cache_exists"] for s in idx_stats.values())
         
-        for tab, items in [(tab_us, regions["US"]), (tab_eu, regions["Europe"]), (tab_ap, regions["Asia/Pacific"]), (tab_etf, regions["ETF"])]:
+        for tab, items in [(tab_us, regions["US"]), (tab_ca, regions["Canada"]), (tab_eu, regions["Europe"]), (tab_ap, regions["Asia/Pacific"]), (tab_etf, regions["ETF"])]:
             with tab:
                 for key, s in items:
                     icon = "✅" if s["cached"] > 0 else "⬜"
