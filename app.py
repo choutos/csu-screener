@@ -64,6 +64,12 @@ if page == "📊 Portfolio":
                 kill_signals = st.text_area("Kill Signals (what would make you sell?)")
                 
                 if st.form_submit_button("Add to Portfolio") and ticker:
+                    if not name or not sector or not industry:
+                        fetched = smart_fetch(ticker)
+                        if fetched:
+                            name = name or fetched.get("name", "")
+                            sector = sector or fetched.get("sector", "")
+                            industry = industry or fetched.get("industry", "")
                     add_to_portfolio(conn, ticker, name, buy_price,
                                      str(buy_date), shares, thesis, kill_signals,
                                      sector=sector, industry=industry)
@@ -304,6 +310,12 @@ elif page == "👀 Watchlist":
             w_kill = st.text_area("Kill Signals")
             
             if st.form_submit_button("Add") and wt:
+                if not wn or not wsect or not wind:
+                    fetched = smart_fetch(wt)
+                    if fetched:
+                        wn = wn or fetched.get("name", "")
+                        wsect = wsect or fetched.get("sector", "")
+                        wind = wind or fetched.get("industry", "")
                 add_to_watchlist(conn, wt, wn, wb, priority=wp,
                                  thesis=w_thesis, kill_signals=w_kill,
                                  sector=wsect, industry=wind)
@@ -572,11 +584,36 @@ elif page == "🧭 Discovery":
             
             if results:
                 st.success(f"Scanned {len(results)} companies via {get_data_source().upper()}")
-                for r in sorted(results, key=lambda x: x.get("total_score", 0), reverse=True):
+                sorted_results = sorted(results, key=lambda x: x.get("total_score", 0), reverse=True)
+                for r in sorted_results:
                     fit_emoji = {"STRONG": "🟢", "MODERATE": "🟡", "WEAK": "🟠", "NOT FIT": "🔴"}.get(r.get("csu_fit"), "⚪")
                     buy_str = f" | 💰 Buy Under: ${r.get('buy_under', 'N/A')}" if r.get('buy_under') else ""
                     fv_str = f" | Fair: ${r.get('fair_value', 'N/A')}" if r.get('fair_value') else ""
-                    st.write(f"{fit_emoji} **{r['ticker']}** — {r['name']} | Score: {r.get('total_score',0)}/{r.get('max_score','?')} | {r.get('csu_fit','?')}{buy_str}{fv_str}")
+                    with st.container():
+                        st.write(f"{fit_emoji} **{r['ticker']}** — {r['name']} | Score: {r.get('total_score',0)}/{r.get('max_score','?')} | {r.get('csu_fit','?')}{buy_str}{fv_str}")
+                        mcol1, mcol2, mcol3 = st.columns([2, 1, 1])
+                        with mcol1:
+                            st.caption(f"{r.get('sector', '')} · {r.get('industry', '')}")
+                        with mcol2:
+                            if st.button("👀 Watchlist", key=f"mscan_wl_{r['ticker']}"):
+                                add_to_watchlist(conn, r["ticker"], r.get("name", ""),
+                                                r.get("buy_under") if r.get("buy_under") else None,
+                                                r.get("total_score"), r.get("max_score"),
+                                                source="manual_scan", sector=r.get("sector", ""),
+                                                industry=r.get("industry", ""))
+                                conn.execute("UPDATE scan_results SET in_watchlist=1 WHERE ticker=?", (r["ticker"],))
+                                conn.commit()
+                                st.success(f"Added {r['ticker']} to watchlist!")
+                                st.rerun()
+                        with mcol3:
+                            if st.button("📈 Portfolio", key=f"mscan_pt_{r['ticker']}"):
+                                add_to_portfolio(conn, r["ticker"], r.get("name", ""),
+                                                sector=r.get("sector", ""), industry=r.get("industry", ""),
+                                                score=r.get("total_score"), max_score=r.get("max_score"))
+                                conn.execute("UPDATE scan_results SET in_portfolio=1 WHERE ticker=?", (r["ticker"],))
+                                conn.commit()
+                                st.success(f"Added {r['ticker']} to portfolio!")
+                                st.rerun()
     
     # ─── Index Discovery ──────────────────────────────────────────────────────
     with tab_index:
