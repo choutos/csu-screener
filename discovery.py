@@ -6,7 +6,8 @@ Sources (auto-detected):
 1. IBKR Scanner (when Gateway is running) — global, all markets
 2. ETF Holdings (yfinance) — pull constituents from thematic ETFs
 3. Wikipedia Index Constituents — S&P, FTSE, DAX, CAC, etc.
-4. Nikkei official CSV — authoritative constituent weights from indexes.nikkei.co.jp
+4. Nikkei official CSV — authoritative constituent list from indexes.nikkei.co.jp
+   Primary: current-day components CSV; Secondary: weights CSV; Last resort: hardcoded list
 
 No API key required for basic discovery.
 """
@@ -79,8 +80,12 @@ INDEX_SOURCES = {
     # Asia/Pacific
     "nikkei225": {
         "label": "Nikkei 225", "region": "JP", "cap": "large",
-        "csv_url": "https://indexes.nikkei.co.jp/nkave/archives/file/nikkei_stock_average_weight_en.csv",
-        "static_tickers": True,  # fallback if CSV fetch fails
+        # 1) Primary: current-day components CSV (official Nikkei export)
+        "csv_url": "https://indexes.nikkei.co.jp/nkave/archives/file/nikkei_stock_average_components_sample(today).csv",
+        # 2) Secondary: weights CSV (also official, updated less frequently)
+        "csv_url_fallback": "https://indexes.nikkei.co.jp/nkave/archives/file/nikkei_stock_average_weight_en.csv",
+        # 3) Last resort: hardcoded list
+        "static_tickers": True,
     },
     "asx200": {"url": "https://en.wikipedia.org/wiki/S%26P/ASX_200", "label": "ASX 200", "region": "AU", "cap": "large"},
 }
@@ -163,20 +168,27 @@ def _fetch_wikipedia_tickers(url: str) -> list[str]:
 
 
 # ─── Nikkei Official CSV ─────────────────────────────────────────────────────
-# Primary source for Nikkei 225: the official constituent-weights CSV published
-# by Nikkei Inc. Preferred over a hardcoded list because it tracks additions and
-# removals automatically (rebalanced semi-annually in April and October).
+# Source priority for Nikkei 225 constituents:
+#   1. Current-day components CSV — published daily, most up-to-date
+#   2. Weights CSV (English) — official, updated less frequently
+#   3. Hardcoded _NIKKEI_225_TICKERS list — last resort if both CSVs fail
+# All sources are from Nikkei Inc. (indexes.nikkei.co.jp).
+# Rebalanced semi-annually (April and October).
 
 def _fetch_nikkei_csv_tickers(url: str) -> list[str]:
-    """Fetch Nikkei 225 tickers from the official CSV, return as ['1234.T', ...]."""
+    """Fetch Nikkei 225 tickers from an official CSV, return as ['1234.T', ...].
+
+    Robust to footer/note rows: only rows whose Code field is a pure digit
+    string are included.
+    """
     headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"}
     r = requests.get(url, headers=headers, timeout=15)
     r.raise_for_status()
     reader = csv.DictReader(io.StringIO(r.text))
     tickers = []
     for row in reader:
-        code = (row.get("Code") or "").strip()
-        if code.isdigit():
+        code = (row.get("Code") or row.get("code") or "").strip()
+        if code and code.isdigit():
             tickers.append(f"{code}.T")
     return tickers
 
@@ -212,12 +224,22 @@ def refresh_index_cache(indexes: list[str] = None) -> dict[str, int | str]:
             results[name] = "unknown index"
             continue
         try:
-            # Nikkei: try official CSV first, fall back to hardcoded list
-            if src.get("csv_url"):
-                try:
-                    tickers = _fetch_nikkei_csv_tickers(src["csv_url"])
-                except Exception:
-                    tickers = []
+            # Nikkei: try components CSV → weights CSV → hardcoded list
+            if src.get("csv_url") or src.get("csv_url_fallback"):
+                tickers = []
+                # 1) Primary: current-day components CSV
+                if src.get("csv_url"):
+                    try:
+                        tickers = _fetch_nikkei_csv_tickers(src["csv_url"])
+                    except Exception:
+                        tickers = []
+                # 2) Secondary: weights CSV
+                if not tickers and src.get("csv_url_fallback"):
+                    try:
+                        tickers = _fetch_nikkei_csv_tickers(src["csv_url_fallback"])
+                    except Exception:
+                        tickers = []
+                # 3) Last resort: hardcoded list
                 if not tickers and src.get("static_tickers"):
                     static_map = {"nikkei225": _NIKKEI_225_TICKERS}
                     tickers = static_map.get(name, [])
