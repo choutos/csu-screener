@@ -6,9 +6,12 @@ Sources (auto-detected):
 1. IBKR Scanner (when Gateway is running) — global, all markets
 2. ETF Holdings (yfinance) — pull constituents from thematic ETFs
 3. Wikipedia Index Constituents — S&P, FTSE, DAX, CAC, etc.
+4. Nikkei official CSV — authoritative constituent weights from indexes.nikkei.co.jp
 
 No API key required for basic discovery.
 """
+import csv
+import io
 import requests
 import json
 from db import get_db, upsert_scan
@@ -74,7 +77,11 @@ INDEX_SOURCES = {
     "tsx60": {"url": "https://en.wikipedia.org/wiki/S%26P/TSX_60", "label": "S&P/TSX 60", "region": "CA", "cap": "large", "suffix": ".TO"},
     "tsx_composite": {"url": "https://en.wikipedia.org/wiki/S%26P/TSX_Composite_Index", "label": "S&P/TSX Composite", "region": "CA", "cap": "large", "suffix": ".TO"},
     # Asia/Pacific
-    "nikkei225": {"label": "Nikkei 225", "region": "JP", "cap": "large", "static_tickers": True},
+    "nikkei225": {
+        "label": "Nikkei 225", "region": "JP", "cap": "large",
+        "csv_url": "https://indexes.nikkei.co.jp/nkave/archives/file/nikkei_stock_average_weight_en.csv",
+        "static_tickers": True,  # fallback if CSV fetch fails
+    },
     "asx200": {"url": "https://en.wikipedia.org/wiki/S%26P/ASX_200", "label": "ASX 200", "region": "AU", "cap": "large"},
 }
 
@@ -102,7 +109,7 @@ ETF_SOURCES = {
 
 
 # ─── Static Ticker Lists ──────────────────────────────────────────────────────
-# For indexes where Wikipedia has no scrapable table, we maintain a static list.
+# Fallback for Nikkei 225 if the official CSV from indexes.nikkei.co.jp is unreachable.
 # Updated periodically — last update: 2026-04
 _NIKKEI_225_TICKERS = [
     "1332.T","1605.T","1721.T","1801.T","1802.T","1803.T","1808.T","1812.T","1925.T","1928.T",
@@ -155,6 +162,25 @@ def _fetch_wikipedia_tickers(url: str) -> list[str]:
     return []
 
 
+# ─── Nikkei Official CSV ─────────────────────────────────────────────────────
+# Primary source for Nikkei 225: the official constituent-weights CSV published
+# by Nikkei Inc. Preferred over a hardcoded list because it tracks additions and
+# removals automatically (rebalanced semi-annually in April and October).
+
+def _fetch_nikkei_csv_tickers(url: str) -> list[str]:
+    """Fetch Nikkei 225 tickers from the official CSV, return as ['1234.T', ...]."""
+    headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"}
+    r = requests.get(url, headers=headers, timeout=15)
+    r.raise_for_status()
+    reader = csv.DictReader(io.StringIO(r.text))
+    tickers = []
+    for row in reader:
+        code = (row.get("Code") or "").strip()
+        if code.isdigit():
+            tickers.append(f"{code}.T")
+    return tickers
+
+
 def _apply_suffix(tickers: list[str], suffix: str) -> list[str]:
     """Append yfinance suffix (e.g. '.TO' for TSX) to tickers that don't already have it."""
     if not suffix:
@@ -186,8 +212,16 @@ def refresh_index_cache(indexes: list[str] = None) -> dict[str, int | str]:
             results[name] = "unknown index"
             continue
         try:
-            # Use static list if available, otherwise scrape Wikipedia
-            if src.get("static_tickers"):
+            # Nikkei: try official CSV first, fall back to hardcoded list
+            if src.get("csv_url"):
+                try:
+                    tickers = _fetch_nikkei_csv_tickers(src["csv_url"])
+                except Exception:
+                    tickers = []
+                if not tickers and src.get("static_tickers"):
+                    static_map = {"nikkei225": _NIKKEI_225_TICKERS}
+                    tickers = static_map.get(name, [])
+            elif src.get("static_tickers"):
                 static_map = {"nikkei225": _NIKKEI_225_TICKERS}
                 tickers = static_map.get(name, [])
             else:
