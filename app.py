@@ -634,6 +634,8 @@ elif page == "🧭 Discovery":
             ("small_cap_quality", "🔭 Small Cap Quality — US + EAFE small caps"),
             ("europe_quality", "🇪🇺 Europe Quality — FTSE, DAX, CAC, IBEX, MIB..."),
             ("europe_small_cap", "🇪🇺 Europe Small Cap — UK mid, MDAX, country ETFs"),
+            ("canada_quality", "🍁 Canada Quality — TSX 60, Composite, banks, rails, tech"),
+            ("canada_small_cap", "🍁 Canada Small Cap — TSX small/mid, quality under the radar"),
             ("asia_pacific", "🌏 Asia-Pacific — Nikkei, ASX"),
             ("full_universe", "🌍 Full Universe — All indexes (slow!)"),
         ]

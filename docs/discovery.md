@@ -20,6 +20,8 @@ Both modes write results to the `scan_results` table, which feeds the "📋 Prev
 | 🇪🇺 Europe Quality | FTSE + DAX + CAC + IBEX + MIB + AEX + SMI | 8% | 35% | $300M | European quality compounders |
 | 🇪🇺 Europe Small Cap | FTSE 250 + MDAX + country ETFs | 5% | 25% | $100M | European small/mid caps with quality |
 | 🌏 Asia-Pacific | Nikkei 225 + ASX 200 | 6% | 30% | $300M | Japan and Australia |
+| 🍁 Canada Quality | TSX 60 + Composite + XIC + EWC | 8% | 35% | $300M | Canadian compounders (banks, rails, tech) |
+| 🍁 Canada Small Cap | Composite + XMD + XCS + EWC | 5% | 25% | $100M | Canadian small/mid caps |
 | 🌍 Full Universe | All indexes | 5% | 25% | $100M | Everything (slow!) |
 
 ### Preset Design Rationale
@@ -62,6 +64,15 @@ Both modes write results to the `scan_results` table, which feeds the "📋 Prev
 | `nikkei225` | Nikkei 225 | Japan |
 | `asx200` | ASX 200 | Australia |
 
+### Canadian Indexes (Wikipedia)
+
+| Key | Index | Cap Range | Suffix |
+|-----|-------|-----------|--------|
+| `tsx60` | S&P/TSX 60 | Large cap | `.TO` |
+| `tsx_composite` | S&P/TSX Composite | Large/mid cap | `.TO` |
+
+**Note:** Canadian tickers require the `.TO` suffix for yfinance. This is automatically appended by the scraper when the index source has a `suffix` field.
+
 ### ETF Holdings (yfinance)
 
 | Key | ETF | Focus |
@@ -75,6 +86,15 @@ Both modes write results to the `scan_results` table, which feeds the "📋 Prev
 | `etf_ewq` | EWQ | France |
 | `etf_ewp` | EWP | Spain |
 | `etf_ewi` | EWI | Italy |
+
+### Canadian ETFs (yfinance)
+
+| Key | ETF | Focus |
+|-----|-----|-------|
+| `etf_xic` | XIC | iShares S&P/TSX Capped Composite |
+| `etf_xmd` | XMD | iShares S&P/TSX MidCap |
+| `etf_xcs` | XCS | iShares S&P/TSX SmallCap |
+| `etf_ewc` | EWC | iShares MSCI Canada |
 
 ## Scan Workflow
 

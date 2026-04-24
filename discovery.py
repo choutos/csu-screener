@@ -70,6 +70,9 @@ INDEX_SOURCES = {
     "ftse_mib": {"url": "https://en.wikipedia.org/wiki/FTSE_MIB", "label": "FTSE MIB", "region": "IT", "cap": "large"},
     "smi20": {"url": "https://en.wikipedia.org/wiki/Swiss_Market_Index", "label": "SMI 20", "region": "CH", "cap": "large"},
     "omx30": {"url": "https://en.wikipedia.org/wiki/OMX_Stockholm_30", "label": "OMX Stockholm 30", "region": "SE", "cap": "large"},
+    # Canada
+    "tsx60": {"url": "https://en.wikipedia.org/wiki/S%26P/TSX_60", "label": "S&P/TSX 60", "region": "CA", "cap": "large", "suffix": ".TO"},
+    "tsx_composite": {"url": "https://en.wikipedia.org/wiki/S%26P/TSX_Composite_Index", "label": "S&P/TSX Composite", "region": "CA", "cap": "large", "suffix": ".TO"},
     # Asia/Pacific
     "nikkei225": {"url": "https://en.wikipedia.org/wiki/Nikkei_225", "label": "Nikkei 225", "region": "JP", "cap": "large"},
     "asx200": {"url": "https://en.wikipedia.org/wiki/S%26P/ASX_200", "label": "ASX 200", "region": "AU", "cap": "large"},
@@ -90,6 +93,11 @@ ETF_SOURCES = {
     "IJR": {"label": "iShares Core S&P Small-Cap", "region": "US", "cap": "small"},
     "QUAL": {"label": "iShares MSCI USA Quality Factor", "region": "US", "cap": "large"},
     "EFAV": {"label": "iShares MSCI EAFE Quality Factor", "region": "EU", "cap": "large"},
+    # Canada
+    "XIC": {"label": "iShares S&P/TSX Capped Composite", "region": "CA", "cap": "large"},
+    "XMD": {"label": "iShares S&P/TSX MidCap", "region": "CA", "cap": "mid"},
+    "XCS": {"label": "iShares S&P/TSX SmallCap", "region": "CA", "cap": "small"},
+    "EWC": {"label": "iShares MSCI Canada", "region": "CA", "cap": "large"},
 }
 
 
@@ -110,6 +118,14 @@ def _fetch_wikipedia_tickers(url: str) -> list[str]:
                 tickers = [t for t in tickers if t and len(t) <= 10 and not t.startswith("Category")]
                 if tickers:
                     return tickers
+    return []
+
+
+def _apply_suffix(tickers: list[str], suffix: str) -> list[str]:
+    """Append yfinance suffix (e.g. '.TO' for TSX) to tickers that don't already have it."""
+    if not suffix:
+        return tickers
+    return [t + suffix if not t.endswith(suffix) else t for t in tickers]
     return []
 
 
@@ -138,6 +154,7 @@ def refresh_index_cache(indexes: list[str] = None) -> dict[str, int | str]:
         try:
             tickers = _fetch_wikipedia_tickers(src["url"])
             if tickers:
+                tickers = _apply_suffix(tickers, src.get("suffix", ""))
                 _save_cached_tickers(name, tickers)
                 results[name] = len(tickers)
             else:
@@ -274,6 +291,20 @@ PRESETS = {
     "europe_small_cap": {
         "description": "European small/mid caps with quality",
         "indexes": ["ftse250", "mdax", "etf_scz", "etf_ewg", "etf_ewu", "etf_ewq", "etf_ewp", "etf_ewi"],
+        "min_fcf_margin": 0.05,
+        "min_gross_margin": 0.25,
+        "min_market_cap_m": 100,
+    },
+    "canada_quality": {
+        "description": "Canadian quality compounders (banks, rails, utilities, tech)",
+        "indexes": ["tsx60", "tsx_composite", "etf_xic", "etf_ewc"],
+        "min_fcf_margin": 0.08,
+        "min_gross_margin": 0.35,
+        "min_market_cap_m": 300,
+    },
+    "canada_small_cap": {
+        "description": "Canadian small/mid caps with quality",
+        "indexes": ["tsx_composite", "etf_xmd", "etf_xcs", "etf_ewc"],
         "min_fcf_margin": 0.05,
         "min_gross_margin": 0.25,
         "min_market_cap_m": 100,
