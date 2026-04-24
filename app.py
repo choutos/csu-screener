@@ -1,7 +1,7 @@
 """
 Investment Process App
 =======================
-Three dashboards: Portfolio, Watchlist, Scanner.
+Four dashboards: Portfolio, Watchlist, Discovery, Settings.
 Run: streamlit run app.py
 """
 import streamlit as st
@@ -25,7 +25,7 @@ def _get_shared_db():
 st.set_page_config(page_title="Invest Process", page_icon="🎩", layout="wide")
 
 # ─── Sidebar ──────────────────────────────────────────────────────────────────
-page = st.sidebar.radio("📐 Dashboard", ["📊 Portfolio", "👀 Watchlist", "🔍 Scanner", "🧭 Discovery", "⚙️ Settings"])
+page = st.sidebar.radio("📐 Dashboard", ["📊 Portfolio", "👀 Watchlist", "🧭 Discovery", "⚙️ Settings"])
 
 # Data source indicator
 source = get_data_source()
@@ -45,7 +45,7 @@ if page == "📊 Portfolio":
     rows = conn.execute("SELECT * FROM portfolio ORDER BY updated_at DESC").fetchall()
     
     if not rows:
-        st.info("No positions yet. Add from the Watchlist or Scanner.")
+        st.info("No positions yet. Add from the Watchlist or Discovery.")
         with st.expander("➕ Add position manually"):
             with st.form("add_portfolio"):
                 col1, col2, col3 = st.columns(3)
@@ -286,7 +286,7 @@ elif page == "👀 Watchlist":
     rows = conn.execute("SELECT * FROM watchlist ORDER BY priority, last_checked DESC").fetchall()
     
     if not rows:
-        st.info("Watchlist is empty. Add from the Scanner or manually.")
+        st.info("Watchlist is empty. Add from Discovery or manually.")
     
     with st.expander("➕ Add to Watchlist"):
         with st.form("add_watchlist"):
@@ -471,302 +471,300 @@ elif page == "👀 Watchlist":
     pass  # conn shared via cache
 
 
-# ─── Scanner Dashboard ────────────────────────────────────────────────────────
-elif page == "🔍 Scanner":
-    st.title("🔍 Scanner")
-    st.caption("Discover new investment candidates. Not limited to software.")
+
+# ─── Discovery Dashboard ──────────────────────────────────────────────────────
+elif page == "🧭 Discovery":
+    st.title("🧭 Discovery")
+    st.caption("Discover quality companies — scan indexes or enter tickers manually.")
     
     conn = _get_shared_db()
     
-    # Quick scan
-    st.subheader("Quick Scan")
-    scan_tickers = st.text_input("Enter tickers (comma-separated)", placeholder="AAPL, MSFT, BRK-B")
-    
-    if st.button("🚀 Scan") and scan_tickers:
-        tickers = [t.strip().upper() for t in scan_tickers.split(",") if t.strip()]
-        progress = st.progress(0)
-        results = []
-        
-        for i, t in enumerate(tickers):
-            with st.spinner(f"Fetching {t}..."):
-                data = smart_fetch(t)
-                if data:
-                    scored = score_company(data)
-                    # Add buy-under calculation
-                    bu = calculate_buy_under(t, data)
-                    if bu:
-                        scored["buy_under"] = bu.get("buy_under_per_share")
-                        scored["fair_value"] = bu.get("fair_value_per_share")
-                    upsert_scan(conn, scored)
-                    results.append(scored)
-            progress.progress((i + 1) / len(tickers))
-        
-        if results:
-            st.success(f"Scanned {len(results)} companies via {get_data_source().upper()}")
-            for r in sorted(results, key=lambda x: x.get("total_score", 0), reverse=True):
-                fit_emoji = {"STRONG": "🟢", "MODERATE": "🟡", "WEAK": "🟠", "NOT FIT": "🔴"}.get(r.get("csu_fit"), "⚪")
-                buy_str = f" | 💰 Buy Under: ${r.get('buy_under', 'N/A')}" if r.get('buy_under') else ""
-                fv_str = f" | Fair: ${r.get('fair_value', 'N/A')}" if r.get('fair_value') else ""
-                st.write(f"{fit_emoji} **{r['ticker']}** — {r['name']} | Score: {r.get('total_score',0)}/{r.get('max_score','?')} | {r.get('csu_fit','?')}{buy_str}{fv_str}")
-    
-    st.markdown("---")
-    
-    # Previous scan results
-    st.subheader("Previous Scan Results")
+    # ── Previous Scan Results (shared across tabs) ──
     scan_rows = conn.execute("""
         SELECT * FROM scan_results 
         ORDER BY score DESC, scanned_at DESC
     """).fetchall()
     
     if scan_rows:
-        # Filter controls
+        with st.expander(f"📋 Previous Scan Results ({len(scan_rows)})", expanded=False):
+            col1, col2 = st.columns(2)
+            with col1:
+                fit_filter = st.multiselect("Fit", ["STRONG", "MODERATE", "WEAK", "NOT FIT"], default=["STRONG", "MODERATE"], key="prev_fit")
+            with col2:
+                sector_filter = st.selectbox("Sector", ["All"] + list(set(r["sector"] for r in scan_rows if r["sector"])), key="prev_sector")
+            
+            filtered = scan_rows
+            if fit_filter:
+                filtered = [r for r in filtered if r["csu_fit"] in fit_filter]
+            if sector_filter != "All":
+                filtered = [r for r in filtered if r["sector"] == sector_filter]
+            
+            if filtered:
+                df = pd.DataFrame(filtered)
+                display_cols = ["ticker", "name", "sector", "industry", "score", "max_score", "csu_fit", "price", "fcf_yield", "gross_margin", "in_portfolio", "in_watchlist"]
+                available_cols = [c for c in display_cols if c in df.columns]
+                st.dataframe(df[available_cols], use_container_width=True, hide_index=True)
+                
+                # Actions on selected ticker
+                st.subheader("Take Action")
+                action_ticker = st.selectbox("Select Ticker", [r["ticker"] for r in filtered], key="prev_action_ticker")
+                selected = next((r for r in filtered if r["ticker"] == action_ticker), None)
+                
+                if selected:
+                    acol1, acol2 = st.columns(2)
+                    with acol1:
+                        buy_under = st.number_input("Buy Under Price", value=0.0, step=1.0, key="scan_bu")
+                        if st.button("👀 Add to Watchlist", key="prev_add_wl"):
+                            add_to_watchlist(conn, action_ticker, selected["name"],
+                                            buy_under if buy_under > 0 else None,
+                                            selected["score"], selected["max_score"],
+                                            source="scan", sector=selected["sector"],
+                                            industry=selected["industry"])
+                            upsert_scan(conn, dict(selected))
+                            conn.execute("UPDATE scan_results SET in_watchlist=1 WHERE ticker=?", (action_ticker,))
+                            conn.commit()
+                            st.success(f"Added {action_ticker} to watchlist!")
+                            st.rerun()
+                    
+                    with acol2:
+                        if st.button("📈 Add to Portfolio", key="prev_add_port"):
+                            add_to_portfolio(conn, action_ticker, selected["name"],
+                                            sector=selected["sector"], industry=selected["industry"],
+                                            score=selected["score"], max_score=selected["max_score"])
+                            upsert_scan(conn, dict(selected))
+                            conn.execute("UPDATE scan_results SET in_portfolio=1 WHERE ticker=?", (action_ticker,))
+                            conn.commit()
+                            st.success(f"Added {action_ticker} to portfolio!")
+                            st.rerun()
+            else:
+                st.info("No results match filters.")
+    
+    st.markdown("---")
+    
+    # ── Main Tabs: Manual Scan vs Index Discovery ──
+    tab_manual, tab_index = st.tabs(["✏️ Manual Scan", "🧭 Index Discovery"])
+    
+    # ─── Manual Scan (was Scanner) ────────────────────────────────────────────
+    with tab_manual:
+        st.subheader("Quick Scan")
+        st.caption("Enter tickers to fetch, score, and evaluate.")
+        
+        scan_tickers = st.text_input("Enter tickers (comma-separated)", placeholder="AAPL, MSFT, BRK-B", key="manual_tickers")
+        
+        if st.button("🚀 Scan", key="manual_scan_btn") and scan_tickers:
+            tickers = [t.strip().upper() for t in scan_tickers.split(",") if t.strip()]
+            progress = st.progress(0)
+            results = []
+            
+            for i, t in enumerate(tickers):
+                with st.spinner(f"Fetching {t}..."):
+                    data = smart_fetch(t)
+                    if data:
+                        scored = score_company(data)
+                        bu = calculate_buy_under(t, data)
+                        if bu:
+                            scored["buy_under"] = bu.get("buy_under_per_share")
+                            scored["fair_value"] = bu.get("fair_value_per_share")
+                        upsert_scan(conn, scored)
+                        conn.commit()
+                        results.append(scored)
+                progress.progress((i + 1) / len(tickers))
+            
+            if results:
+                st.success(f"Scanned {len(results)} companies via {get_data_source().upper()}")
+                for r in sorted(results, key=lambda x: x.get("total_score", 0), reverse=True):
+                    fit_emoji = {"STRONG": "🟢", "MODERATE": "🟡", "WEAK": "🟠", "NOT FIT": "🔴"}.get(r.get("csu_fit"), "⚪")
+                    buy_str = f" | 💰 Buy Under: ${r.get('buy_under', 'N/A')}" if r.get('buy_under') else ""
+                    fv_str = f" | Fair: ${r.get('fair_value', 'N/A')}" if r.get('fair_value') else ""
+                    st.write(f"{fit_emoji} **{r['ticker']}** — {r['name']} | Score: {r.get('total_score',0)}/{r.get('max_score','?')} | {r.get('csu_fit','?')}{buy_str}{fv_str}")
+    
+    # ─── Index Discovery ──────────────────────────────────────────────────────
+    with tab_index:
+        # ── Index Cache Status ──
+        st.subheader("Index Universe")
+        idx_stats = get_index_stats()
+        
+        # Group by region
+        regions = {"US": [], "Europe": [], "Asia/Pacific": [], "ETF": []}
+        region_map = {"US": "US", "UK": "Europe", "DE": "Europe", "FR": "Europe", "NL": "Europe", "ES": "Europe", "IT": "Europe", "CH": "Europe", "SE": "Europe", "JP": "Asia/Pacific", "AU": "Asia/Pacific", "EU": "ETF"}
+        
+        for key, s in idx_stats.items():
+            region = "ETF" if key.startswith("etf_") else region_map.get(s.get("region", "US"), "US")
+            regions[region].append((key, s))
+        
+        tab_us, tab_eu, tab_ap, tab_etf = st.tabs(["🇺🇸 US", "🇪🇺 Europe", "🌏 Asia/Pacific", "📦 ETFs"])
+        
+        needs_refresh = any(not s["cache_exists"] for s in idx_stats.values())
+        
+        for tab, items in [(tab_us, regions["US"]), (tab_eu, regions["Europe"]), (tab_ap, regions["Asia/Pacific"]), (tab_etf, regions["ETF"])]:
+            with tab:
+                for key, s in items:
+                    icon = "✅" if s["cached"] > 0 else "⬜"
+                    st.write(f"{icon} **{s['label']}** — {s['cached']} tickers ({s['cap']}-cap)")
+        
         col1, col2 = st.columns(2)
         with col1:
-            fit_filter = st.multiselect("Fit", ["STRONG", "MODERATE", "WEAK", "NOT FIT"], default=["STRONG", "MODERATE"])
+            if st.button("🔄 Refresh Indexes", help="Re-download all index constituents from Wikipedia"):
+                with st.spinner("Refreshing indexes..."):
+                    counts = refresh_index_cache()
+                    for k, v in counts.items():
+                        if isinstance(v, str):
+                            st.error(f"{INDEX_SOURCES.get(k, {}).get('label', k)}: {v}")
+                        else:
+                            st.success(f"{INDEX_SOURCES.get(k, {}).get('label', k)}: {v} tickers")
         with col2:
-            sector_filter = st.selectbox("Sector", ["All"] + list(set(r["sector"] for r in scan_rows if r["sector"])))
+            if st.button("📦 Refresh ETFs", help="Fetch ETF holdings via yfinance"):
+                with st.spinner("Refreshing ETFs..."):
+                    counts = refresh_etf_holdings()
+                    for k, v in counts.items():
+                        if isinstance(v, str):
+                            st.warning(f"{k}: {v}")
+                        else:
+                            st.success(f"{k}: {v} holdings")
         
-        filtered = scan_rows
-        if fit_filter:
-            filtered = [r for r in filtered if r["csu_fit"] in fit_filter]
-        if sector_filter != "All":
-            filtered = [r for r in filtered if r["sector"] == sector_filter]
+        st.markdown("---")
         
-        # Display as table
-        if filtered:
-            df = pd.DataFrame(filtered)
-            display_cols = ["ticker", "name", "sector", "industry", "score", "max_score", "csu_fit", "price", "fcf_yield", "gross_margin", "in_portfolio", "in_watchlist"]
-            available_cols = [c for c in display_cols if c in df.columns]
-            st.dataframe(df[available_cols], use_container_width=True, hide_index=True)
+        # ── Preset Scans ──
+        st.subheader("Discovery Scans")
+        
+        preset_options = [
+            ("quality_compounders", "🏛️ Quality Compounders — High FCF, stable, durable"),
+            ("deep_value", "💰 Deep Value — Cheap on FCF yield, profitable"),
+            ("wide_moat", "🏰 Wide Moat — High margins, dominant"),
+            ("small_cap_quality", "🔭 Small Cap Quality — US + EAFE small caps"),
+            ("europe_quality", "🇪🇺 Europe Quality — FTSE, DAX, CAC, IBEX, MIB..."),
+            ("europe_small_cap", "🇪🇺 Europe Small Cap — UK mid, MDAX, country ETFs"),
+            ("asia_pacific", "🌏 Asia-Pacific — Nikkei, ASX"),
+            ("full_universe", "🌍 Full Universe — All indexes (slow!)"),
+        ]
+        
+        preset = st.selectbox("Scan Type", preset_options, format_func=lambda x: x[1], key="idx_preset")
+        preset_key = preset[0]
+        
+        batch_size = st.slider(
+            "Tickers to scan",
+            min_value=10, max_value=100, value=20, step=10,
+            help="How many tickers to fetch per scan. More = slower but more results.",
+            key="idx_batch"
+        )
+        
+        available = get_available_ticker_count(preset_key)
+        st.caption(f"Available universe: {available} tickers | Scanning {min(batch_size, available)}")
+        
+        if st.button("🚀 Run Discovery Scan", type="primary", disabled=available==0, key="idx_scan_btn"):
+            progress = st.progress(0, text="Starting scan...")
             
-            # Actions on selected ticker
-            st.subheader("Take Action")
-            action_ticker = st.selectbox("Select Ticker", [r["ticker"] for r in filtered])
-            selected = next((r for r in filtered if r["ticker"] == action_ticker), None)
+            def on_progress(current, total, ticker):
+                pct = int((current + 1) / total * 100)
+                progress.progress(pct, text=f"Scanning {ticker}... ({current+1}/{total})")
             
-            if selected:
-                acol1, acol2 = st.columns(2)
-                with acol1:
-                    buy_under = st.number_input("Buy Under Price", value=0.0, step=1.0, key="scan_bu")
-                    if st.button("👀 Add to Watchlist"):
-                        add_to_watchlist(conn, action_ticker, selected["name"],
-                                        buy_under if buy_under > 0 else None,
-                                        selected["score"], selected["max_score"],
-                                        source="scan", sector=selected["sector"],
-                                        industry=selected["industry"])
-                        upsert_scan(conn, dict(selected))  # refresh
-                        conn.execute("UPDATE scan_results SET in_watchlist=1 WHERE ticker=?", (action_ticker,))
-                        st.success(f"Added {action_ticker} to watchlist!")
-                        st.rerun()
+            try:
+                results = run_discovery(preset=preset_key, batch_size=batch_size, progress_callback=on_progress)
+            except Exception as e:
+                st.error(f"Scan error: {e}")
+                results = []
+            
+            progress.empty()
+            st.session_state["discovery_results"] = results
+        
+        # Show results from session state (survives rerun after Watch button)
+        results = st.session_state.get("discovery_results", None)
+        if results is not None:
+            if not results:
+                st.info("No companies passed the filters. Try relaxing criteria or scanning more tickers.")
+            else:
+                st.success(f"Found {len(results)} quality companies!")
                 
-                with acol2:
-                    if st.button("📈 Add to Portfolio"):
-                        add_to_portfolio(conn, action_ticker, selected["name"],
-                                        sector=selected["sector"], industry=selected["industry"],
-                                        score=selected["score"], max_score=selected["max_score"])
-                        upsert_scan(conn, dict(selected))
-                        conn.execute("UPDATE scan_results SET in_portfolio=1 WHERE ticker=?", (action_ticker,))
-                        st.success(f"Added {action_ticker} to portfolio!")
-                        st.rerun()
-        else:
-            st.info("No results match filters.")
-    else:
-        st.info("No scan results yet. Run a scan above.")
-    
-    pass  # conn shared via cache
-
-
-# ─── Discovery Dashboard ──────────────────────────────────────────────────────
-elif page == "🧭 Discovery":
-    st.title("🧭 Discovery")
-    st.caption("Auto-discover quality companies from index constituents. No API key needed — uses Wikipedia + yfinance.")
-    
-    conn = _get_shared_db()
-    
-    # ── Index Cache Status ──
-    st.subheader("Index Universe")
-    idx_stats = get_index_stats()
-    
-    # Group by region
-    regions = {"US": [], "Europe": [], "Asia/Pacific": [], "ETF": []}
-    region_map = {"US": "US", "UK": "Europe", "DE": "Europe", "FR": "Europe", "NL": "Europe", "ES": "Europe", "IT": "Europe", "CH": "Europe", "SE": "Europe", "JP": "Asia/Pacific", "AU": "Asia/Pacific", "EU": "ETF"}
-    
-    for key, s in idx_stats.items():
-        region = "ETF" if key.startswith("etf_") else region_map.get(s.get("region", "US"), "US")
-        regions[region].append((key, s))
-    
-    tab_us, tab_eu, tab_ap, tab_etf = st.tabs(["🇺🇸 US", "🇪🇺 Europe", "🌏 Asia/Pacific", "📦 ETFs"])
-    
-    needs_refresh = any(not s["cache_exists"] for s in idx_stats.values())
-    
-    for tab, items in [(tab_us, regions["US"]), (tab_eu, regions["Europe"]), (tab_ap, regions["Asia/Pacific"]), (tab_etf, regions["ETF"])]:
-        with tab:
-            for key, s in items:
-                icon = "✅" if s["cached"] > 0 else "⬜"
-                st.write(f"{icon} **{s['label']}** — {s['cached']} tickers ({s['cap']}-cap)")
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("🔄 Refresh Indexes", help="Re-download all index constituents from Wikipedia"):
-            with st.spinner("Refreshing indexes..."):
-                counts = refresh_index_cache()
-                for k, v in counts.items():
-                    if isinstance(v, str):
-                        st.error(f"{INDEX_SOURCES.get(k, {}).get('label', k)}: {v}")
-                    else:
-                        st.success(f"{INDEX_SOURCES.get(k, {}).get('label', k)}: {v} tickers")
-    with col2:
-        if st.button("📦 Refresh ETFs", help="Fetch ETF holdings via yfinance"):
-            with st.spinner("Refreshing ETFs..."):
-                counts = refresh_etf_holdings()
-                for k, v in counts.items():
-                    if isinstance(v, str):
-                        st.warning(f"{k}: {v}")
-                    else:
-                        st.success(f"{k}: {v} holdings")
-    
-    st.markdown("---")
-    
-    # ── Preset Scans ──
-    st.subheader("Discovery Scans")
-    
-    preset_options = [
-        ("quality_compounders", "🏛️ Quality Compounders — High FCF, stable, durable"),
-        ("deep_value", "💰 Deep Value — Cheap on FCF yield, profitable"),
-        ("wide_moat", "🏰 Wide Moat — High margins, dominant"),
-        ("small_cap_quality", "🔭 Small Cap Quality — US + EAFE small caps"),
-        ("europe_quality", "🇪🇺 Europe Quality — FTSE, DAX, CAC, IBEX, MIB..."),
-        ("europe_small_cap", "🇪🇺 Europe Small Cap — UK mid, MDAX, country ETFs"),
-        ("asia_pacific", "🌏 Asia-Pacific — Nikkei, ASX"),
-        ("full_universe", "🌍 Full Universe — All indexes (slow!)"),
-    ]
-    
-    preset = st.selectbox("Scan Type", preset_options, format_func=lambda x: x[1])
-    preset_key = preset[0]
-    
-    batch_size = st.slider(
-        "Tickers to scan",
-        min_value=10, max_value=100, value=20, step=10,
-        help="How many tickers to fetch per scan. More = slower but more results."
-    )
-    
-    available = get_available_ticker_count(preset_key)
-    st.caption(f"Available universe: {available} tickers | Scanning {min(batch_size, available)}")
-    
-    if st.button("🚀 Run Discovery Scan", type="primary", disabled=available==0):
-        progress = st.progress(0, text="Starting scan...")
-        
-        def on_progress(current, total, ticker):
-            pct = int((current + 1) / total * 100)
-            progress.progress(pct, text=f"Scanning {ticker}... ({current+1}/{total})")
-        
-        try:
-            results = run_discovery(preset=preset_key, batch_size=batch_size, progress_callback=on_progress)
-        except Exception as e:
-            st.error(f"Scan error: {e}")
-            results = []
-        
-        progress.empty()
-        st.session_state["discovery_results"] = results
-    
-    # Show results from session state (survives rerun after Watch button)
-    results = st.session_state.get("discovery_results", None)
-    if results is not None:
-        if not results:
-            st.info("No companies passed the filters. Try relaxing criteria or scanning more tickers.")
-        else:
-            st.success(f"Found {len(results)} quality companies!")
-            
-            # Save to scan_results
-            for r in results:
-                upsert_scan(conn, r)
-            conn.commit()
-            
-            # Display results
-            for r in results:
-                fit = r.get("csu_fit", "?")
-                fit_emoji = {"STRONG": "🟢", "MODERATE": "🟡", "WEAK": "🟠", "NOT FIT": "🔴"}.get(fit, "⚪")
-                score = r.get("total_score", 0)
-                max_score = r.get("max_score", "?")
+                # Save to scan_results
+                for r in results:
+                    upsert_scan(conn, r)
+                conn.commit()
                 
-                # Check if already tracked
-                in_p = conn.execute("SELECT 1 FROM portfolio WHERE ticker=?", (r['ticker'],)).fetchone()
-                in_w = conn.execute("SELECT 1 FROM watchlist WHERE ticker=?", (r['ticker'],)).fetchone()
-                status_badge = ""
-                if in_p:
-                    status_badge = " 📊 OWN"
-                elif in_w:
-                    status_badge = " 👀 TRACKING"
-                
-                with st.container(border=True):
-                    hcol, scol, acol = st.columns([3, 1, 1])
-                    with hcol:
-                        st.write(f"{fit_emoji} **{r['ticker']}** — {r.get('name', '?')}{status_badge}")
-                        st.caption(f"{r.get('sector', '?')} / {r.get('industry', '?')} | MCap: ${r.get('market_cap_m', 0):,.0f}M")
-                    with scol:
-                        st.write(f"**{score}/{max_score}** | {fit}")
-                    with acol:
-                        if not in_p and not in_w:
-                            if st.button(f"👀 Watch", key=f"disc_w_{r['ticker']}"):
-                                add_to_watchlist(conn, r['ticker'], r.get('name', ''),
-                                                score=score, max_score=max_score, source=f"discovery_{preset_key}",
-                                                sector=r.get('sector', ''), industry=r.get('industry', ''))
-                                # Auto-generate thesis & kill signals via LLM
-                                analysis = generate_analysis(r)
-                                if analysis:
-                                    updates = []
-                                    if analysis.get("thesis"):
-                                        updates.append("thesis=?")
-                                    if analysis.get("kill_signals"):
-                                        updates.append("kill_signals=?")
-                                    if analysis.get("buy_under"):
-                                        updates.append("buy_under=?")
-                                    if updates:
-                                        vals = []
-                                        for k in ["thesis", "kill_signals", "buy_under"]:
-                                            if analysis.get(k):
-                                                vals.append(analysis[k])
-                                        vals.append(r['ticker'])
-                                        conn.execute(f"UPDATE watchlist SET {', '.join(updates)}, updated_at=datetime('now') WHERE ticker=?", vals)
-                                conn.commit()
-                                st.success(f"Added {r['ticker']} to watchlist!{' 🧠 Analysis generated' if analysis else ''}")
-                                st.rerun()
+                # Display results
+                for r in results:
+                    fit = r.get("csu_fit", "?")
+                    fit_emoji = {"STRONG": "🟢", "MODERATE": "🟡", "WEAK": "🟠", "NOT FIT": "🔴"}.get(fit, "⚪")
+                    score = r.get("total_score", 0)
+                    max_score = r.get("max_score", "?")
                     
-                    # Key metrics row
-                    metrics = []
-                    for key, label, fmt in [
-                        ("gross_margin", "Gross M", ".0%"),
-                        ("fcf_margin", "FCF M", ".0%"),
-                        ("fcf_yield", "FCF Y", ".1%"),
-                        ("revenue_growth_3y", "Rev Gr", ".0%"),
-                        ("debt_to_equity", "D/E", ".2f"),
-                    ]:
-                        v = r.get(key)
-                        if v is not None:
-                            try:
-                                metrics.append(f"{label}: {v:{fmt}}")
-                            except (ValueError, TypeError):
-                                metrics.append(f"{label}: {v}")
-                    if metrics:
-                        st.caption(" | ".join(metrics))
-    
-    st.markdown("---")
-    
-    # ── Optional: FMP Integration ──
-    with st.expander("🔑 FMP API Key (Optional — for European stocks)"):
-        st.caption("The free discovery above covers US indexes. Add an FMP key for European exchanges.")
-        api_key = get_api_key()
-        current_key = st.text_input("FMP API Key", value=api_key or "", type="password")
-        if st.button("💾 Save FMP Key") and current_key:
-            save_api_key(current_key)
-            st.success("Saved!")
-        if api_key:
-            if st.button("🧪 Test FMP Key"):
-                ok, msg = test_fmp_key(api_key)
-                if ok:
-                    st.success(msg)
-                else:
-                    st.error(msg)
+                    # Check if already tracked
+                    in_p = conn.execute("SELECT 1 FROM portfolio WHERE ticker=?", (r['ticker'],)).fetchone()
+                    in_w = conn.execute("SELECT 1 FROM watchlist WHERE ticker=?", (r['ticker'],)).fetchone()
+                    status_badge = ""
+                    if in_p:
+                        status_badge = " 📊 OWN"
+                    elif in_w:
+                        status_badge = " 👀 TRACKING"
+                    
+                    with st.container(border=True):
+                        hcol, scol, acol = st.columns([3, 1, 1])
+                        with hcol:
+                            st.write(f"{fit_emoji} **{r['ticker']}** — {r.get('name', '?')}{status_badge}")
+                            st.caption(f"{r.get('sector', '?')} / {r.get('industry', '?')} | MCap: ${r.get('market_cap_m', 0):,.0f}M")
+                        with scol:
+                            st.write(f"**{score}/{max_score}** | {fit}")
+                        with acol:
+                            if not in_p and not in_w:
+                                if st.button(f"👀 Watch", key=f"disc_w_{r['ticker']}"):
+                                    add_to_watchlist(conn, r['ticker'], r.get('name', ''),
+                                                    score=score, max_score=max_score, source=f"discovery_{preset_key}",
+                                                    sector=r.get('sector', ''), industry=r.get('industry', ''))
+                                    # Auto-generate thesis & kill signals via LLM
+                                    analysis = generate_analysis(r)
+                                    if analysis:
+                                        updates = []
+                                        if analysis.get("thesis"):
+                                            updates.append("thesis=?")
+                                        if analysis.get("kill_signals"):
+                                            updates.append("kill_signals=?")
+                                        if analysis.get("buy_under"):
+                                            updates.append("buy_under=?")
+                                        if updates:
+                                            vals = []
+                                            for k in ["thesis", "kill_signals", "buy_under"]:
+                                                if analysis.get(k):
+                                                    vals.append(analysis[k])
+                                            vals.append(r['ticker'])
+                                            conn.execute(f"UPDATE watchlist SET {', '.join(updates)}, updated_at=datetime('now') WHERE ticker=?", vals)
+                                    conn.commit()
+                                    st.success(f"Added {r['ticker']} to watchlist!{' 🧠 Analysis generated' if analysis else ''}")
+                                    st.rerun()
+                        
+                        # Key metrics row
+                        metrics = []
+                        for key, label, fmt in [
+                            ("gross_margin", "Gross M", ".0%"),
+                            ("fcf_margin", "FCF M", ".0%"),
+                            ("fcf_yield", "FCF Y", ".1%"),
+                            ("revenue_growth_3y", "Rev Gr", ".0%"),
+                            ("debt_to_equity", "D/E", ".2f"),
+                        ]:
+                            v = r.get(key)
+                            if v is not None:
+                                try:
+                                    metrics.append(f"{label}: {v:{fmt}}")
+                                except (ValueError, TypeError):
+                                    metrics.append(f"{label}: {v}")
+                        if metrics:
+                            st.caption(" | ".join(metrics))
+        
+        st.markdown("---")
+        
+        # ── Optional: FMP Integration ──
+        with st.expander("🔑 FMP API Key (Optional — for European stocks)"):
+            st.caption("The free discovery above covers US indexes. Add an FMP key for European exchanges.")
+            api_key = get_api_key()
+            current_key = st.text_input("FMP API Key", value=api_key or "", type="password", key="fmp_key_idx")
+            if st.button("💾 Save FMP Key", key="fmp_save_idx") and current_key:
+                save_api_key(current_key)
+                st.success("Saved!")
+            if api_key:
+                if st.button("🧪 Test FMP Key", key="fmp_test_idx"):
+                    ok, msg = test_fmp_key(api_key)
+                    if ok:
+                        st.success(msg)
+                    else:
+                        st.error(msg)
     
     pass  # conn shared via cache
 
@@ -893,3 +891,4 @@ elif page == "⚙️ Settings":
         st.rerun()
     
     pass  # conn shared via cache
+

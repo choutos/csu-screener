@@ -11,7 +11,7 @@ A Streamlit-based investment process app for tracking quality compounder stocks.
 ```
 ┌─────────────────────────────────────────────┐
 │  app.py (Streamlit UI — all 5 dashboards)   │
-│  Portfolio | Watchlist | Scanner | Discovery │
+│  Portfolio | Watchlist | Discovery (Manual + Index) │
 │  Settings                                     │
 └──────────┬──────────┬──────────┬─────────────┘
            │          │          │
@@ -36,13 +36,13 @@ A Streamlit-based investment process app for tracking quality compounder stocks.
 
 | File | Purpose | Key Functions |
 |------|---------|---------------|
-| `app.py` | Streamlit UI, all pages | `portfolio_page()`, `watchlist_page()`, `scanner_page()`, `discovery_page()`, `settings_page()` |
+| `app.py` | Streamlit UI, all pages | `portfolio_page()`, `watchlist_page()`, `discovery_page()`, `settings_page()` |
 | `db.py` | SQLite CRUD + migrations | `get_db()`, `init_db()`, `upsert_scan()`, `add_to_watchlist()`, `add_to_portfolio()`, `move_to_portfolio()`, `move_to_watchlist()`, `log_kill_signal()`, `update_portfolio_status()` |
 | `fetcher.py` | Data fetching + scoring | `fetch_company()` → raw data, `score_company()` → scored data with KPI breakdown |
 | `smart_fetcher.py` | yfinance/IBKR abstraction | `smart_fetch()`, `fetch_company()`, `fetch_companies_batch()`, `calculate_buy_under()` |
 | `discovery.py` | Batch screening across indices | `fetch_index_tickers()`, `screen_tickers()`, `run_discovery_scan()` |
 | `llm_advisor.py` | LLM-powered analysis | `generate_analysis()`, `check_portfolio_health()`, `test_connection()`, `load_config()`, `save_config()` |
-| `kill_signal_scanner.py` | Standalone scanner | Batch kill signal checks across portfolio |
+| `kill_signal_scanner.py` | Standalone scanner (batch kill signals) | Batch kill signal checks across portfolio |
 
 ## Database
 
@@ -85,7 +85,7 @@ SQLite at `invest.db`, managed via `db.py`.
 | 📈 Buy → | Watchlist | Two-step inline form: shows buy price (pre-filled) + shares input, then moves to Portfolio |
 | 🗑️ Remove | Watchlist/Portfolio | Removes from table |
 | 🩺 Health Check | Portfolio | Fetches fresh data, re-scores, calls LLM to evaluate thesis validity. Updates score + status. Auto-sets WATCH if recommended |
-| 👀 Watch | Discovery/Scanner | Adds to Watchlist with auto-LLM analysis |
+| 👀 Watch | Discovery | Adds to Watchlist with auto-LLM analysis |
 
 ## LLM Advisor
 
