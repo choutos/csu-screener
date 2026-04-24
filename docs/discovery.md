@@ -73,28 +73,31 @@ Both modes write results to the `scan_results` table, which feeds the "📋 Prev
 
 **Note:** Canadian tickers require the `.TO` suffix for yfinance. This is automatically appended by the scraper when the index source has a `suffix` field.
 
-### ETF Holdings (yfinance)
+### ETF Holdings (iShares / BlackRock CSV)
 
-| Key | ETF | Focus |
-|-----|-----|-------|
-| `etf_iwm` | IWM | US small cap (Russell 2000) |
-| `etf_scz` | SCZ | International small cap |
-| `etf_ezu` | EZU | Eurozone |
-| `etf_vgk` | VGK | Europe |
-| `etf_ewg` | EWG | Germany |
-| `etf_ewu` | EWU | UK |
-| `etf_ewq` | EWQ | France |
-| `etf_ewp` | EWP | Spain |
-| `etf_ewi` | EWI | Italy |
+Holdings are fetched directly from issuer CSV files (iShares product pages for US-listed ETFs, BlackRock Canada product pages for TSX-listed ETFs). No yfinance dependency.
 
-### Canadian ETFs (yfinance)
+| Key | ETF | Focus | Source |
+|-----|-----|-------|--------|
+| `etf_iwm` | IWM | US small cap (Russell 2000) | iShares US |
+| `etf_ijr` | IJR | S&P SmallCap 600 | iShares US |
+| `etf_qual` | QUAL | US quality factor | iShares US |
+| `etf_scz` | SCZ | International small cap | iShares US |
+| `etf_efav` | EFAV | EAFE quality factor | iShares US |
+| `etf_ezu` | EZU | Eurozone | iShares US |
+| `etf_ewg` | EWG | Germany | iShares US |
+| `etf_ewu` | EWU | UK | iShares US |
+| `etf_ewq` | EWQ | France | iShares US |
+| `etf_ewp` | EWP | Spain | iShares US |
+| `etf_ewi` | EWI | Italy | iShares US |
+| `etf_ewd` | EWD | Sweden | iShares US |
+| `etf_ews` | EWS | Switzerland | iShares US |
+| `etf_ewc` | EWC | Canada (MSCI) | iShares US |
+| `etf_xic` | XIC | iShares S&P/TSX Capped Composite | BlackRock CA |
+| `etf_xmd` | XMD | iShares S&P/TSX MidCap | BlackRock CA |
+| `etf_xcs` | XCS | iShares S&P/TSX SmallCap | BlackRock CA |
 
-| Key | ETF | Focus |
-|-----|-----|-------|
-| `etf_xic` | XIC | iShares S&P/TSX Capped Composite |
-| `etf_xmd` | XMD | iShares S&P/TSX MidCap |
-| `etf_xcs` | XCS | iShares S&P/TSX SmallCap |
-| `etf_ewc` | EWC | iShares MSCI Canada |
+**VGK** (Vanguard FTSE Europe) is listed in ETF_SOURCES but has no iShares/BlackRock backing; it is explicitly marked as unsupported until a Vanguard holdings source is added.
 
 ## Scan Workflow
 
@@ -124,7 +127,7 @@ Index constituents are cached in SQLite (`index_cache` table) to avoid re-scrapi
 
 **Refresh buttons** re-download from source:
 - "🔄 Refresh Indexes" — re-scrapes all Wikipedia index pages
-- "📦 Refresh ETFs" — re-fetches ETF holdings via yfinance
+- "📦 Refresh ETFs" — re-fetches ETF holdings from iShares/BlackRock CSV files
 
 ## FMP Integration (Optional)
 
