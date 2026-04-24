@@ -87,7 +87,7 @@ INDEX_SOURCES = {
         # 3) Last resort: hardcoded list
         "static_tickers": True,
     },
-    "asx200": {"url": "https://en.wikipedia.org/wiki/S%26P/ASX_200", "label": "ASX 200", "region": "AU", "cap": "large"},
+    "asx200": {"url": "https://en.wikipedia.org/wiki/S%26P/ASX_200", "label": "ASX 200", "region": "AU", "cap": "large", "suffix": ".AX"},
 }
 
 ETF_SOURCES = {
@@ -436,7 +436,7 @@ def run_discovery(preset: str = "quality_compounders",
             for i, comp in enumerate(ib_results[:batch_size]):
                 if progress_callback:
                     progress_callback(i, min(batch_size, len(ib_results)), comp["ticker"])
-                data = smart_fetch(comp["ticker"])
+                data = smart_fetch(comp["ticker"], discovery_mode=True)
                 if data:
                     gm = data.get("gross_margin", 0) or 0
                     fm = data.get("fcf_margin") or 0
@@ -484,7 +484,7 @@ def run_discovery(preset: str = "quality_compounders",
     for i, ticker in enumerate(to_scan):
         if progress_callback:
             progress_callback(i, len(to_scan), ticker)
-        data = smart_fetch(ticker)
+        data = smart_fetch(ticker, discovery_mode=True)
         if not data:
             continue
         gm = data.get("gross_margin", 0) or 0
