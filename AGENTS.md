@@ -10,10 +10,10 @@ A Streamlit-based investment process app for tracking quality compounder stocks.
 
 ```
 ┌─────────────────────────────────────────────┐
-│  app.py (Streamlit UI — all 5 dashboards)   │
-│  Portfolio | Watchlist | Discovery (Manual + Index) │
-│  Settings                                     │
-└──────────┬──────────┬──────────┬─────────────┘
+│  app.py (Streamlit UI — 4 dashboards)       │
+│  Portfolio | Watchlist | Discovery          │
+│  (Manual + Index) | Settings                │
+└──────────┬──────────┬──────────┬────────────┘
            │          │          │
     ┌──────▼──┐ ┌─────▼─────┐ ┌─▼──────────┐
     │ db.py   │ │smart_     │ │llm_advisor │
@@ -130,7 +130,7 @@ Config stored in `llm_config.json`, editable via Settings page.
 1. **New DB column?** Add `ALTER TABLE` in `init_db()` inside a `try/except` block.
 2. **New button?** Use unique `key=f"btn_{ticker}"` pattern. Guard action with `st.session_state` flag if it triggers a rerun.
 3. **New LLM prompt?** Keep output format explicit and constrained. Add `max_tokens` parameter generously.
-4. **New page?** Add to the sidebar radio in `app.py`. Follow the `xxx_page()` function pattern.
+4. **New dashboard section?** Add it to the sidebar radio in `app.py` or fold it into an existing section. For Discovery changes, decide whether they belong in the Manual Scan tab, the Index Discovery tab, or the shared results area.
 5. **Always check imports.** Missing `import os`, `import json`, `from pathlib import Path` are a recurring bug.
 6. **Always test with `python3 -c "import ast; ast.parse(open('app.py').read())"`** before pushing.
 
