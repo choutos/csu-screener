@@ -33,8 +33,13 @@ def needs_metadata_backfill(row):
     return False
 
 
+_BACKFILL_TABLES = {"watchlist", "portfolio"}
+
+
 def backfill_metadata(conn, table, ticker, fetched):
     """Update name/sector/industry when stored metadata is blank or ticker-like."""
+    if table not in _BACKFILL_TABLES:
+        raise ValueError(f"unsupported table: {table}")
     row = conn.execute(f"SELECT name, sector, industry FROM {table} WHERE ticker=?", (ticker,)).fetchone()
     if not row:
         return

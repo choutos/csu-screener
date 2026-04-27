@@ -21,7 +21,7 @@ Usage:
 """
 import sys
 import json
-import sqlite3
+from contextlib import closing
 from datetime import datetime
 from pathlib import Path
 
@@ -35,10 +35,9 @@ from db import get_db, log_kill_signal
 
 def scan_watchlist() -> list[dict]:
     """Scan all watchlist companies for kill signals."""
-    conn = get_db()
-    rows = conn.execute("SELECT * FROM watchlist ORDER BY priority, last_checked DESC").fetchall()
-    conn.close()
-    
+    with closing(get_db()) as conn:
+        rows = conn.execute("SELECT * FROM watchlist ORDER BY priority, last_checked DESC").fetchall()
+
     alerts = []
     for row in rows:
         result = check_company(dict(row), source="watchlist")
@@ -49,10 +48,9 @@ def scan_watchlist() -> list[dict]:
 
 def scan_portfolio() -> list[dict]:
     """Scan all portfolio companies for kill signals."""
-    conn = get_db()
-    rows = conn.execute("SELECT * FROM portfolio WHERE status='OPEN'").fetchall()
-    conn.close()
-    
+    with closing(get_db()) as conn:
+        rows = conn.execute("SELECT * FROM portfolio WHERE status='OPEN'").fetchall()
+
     alerts = []
     for row in rows:
         result = check_company(dict(row), source="portfolio")
@@ -78,15 +76,11 @@ def check_company(entry: dict, source: str = "watchlist") -> list[dict]:
     
     # Re-score
     scored = score_company(data)
-    
-    # Store baseline metrics if not present
-    conn = get_db()
-    _save_baseline(conn, ticker, data)
-    
-    # Get baseline for comparison
-    baseline = _get_baseline(conn, ticker)
-    conn.close()
-    
+
+    # Store baseline metrics if not present, then load for comparison
+    _save_baseline(ticker, data)
+    baseline = _get_baseline(ticker)
+
     alerts = []
     
     # ─── Rule 1: FCF Compression ───────────────────────────────────────
@@ -186,39 +180,33 @@ def check_company(entry: dict, source: str = "watchlist") -> list[dict]:
     # ─── Rule 8: Fetch Failure ─────────────────────────────────────────
     # Already handled above
     
-    # Log all alerts to DB
-    conn = get_db()
-    for alert in alerts:
-        log_kill_signal(
-            conn,
-            ticker=alert["ticker"],
-            signal_type=alert["signal"],
-            severity=alert["severity"],
-            details=alert["details"],
-            action=alert.get("action", "WATCH"),
-            current_price=current_price,
-        )
-    conn.commit()
-    
-    # Save price snapshot
-    if current_price:
-        conn.execute("INSERT INTO price_snapshots (ticker, price) VALUES (?, ?)",
-                     (ticker, current_price))
+    with closing(get_db()) as conn:
+        for alert in alerts:
+            log_kill_signal(
+                conn,
+                ticker=alert["ticker"],
+                signal_type=alert["signal"],
+                severity=alert["severity"],
+                details=alert["details"],
+                action=alert.get("action", "WATCH"),
+                current_price=current_price,
+            )
+
+        if current_price:
+            conn.execute("INSERT INTO price_snapshots (ticker, price) VALUES (?, ?)",
+                         (ticker, current_price))
+
+        conn.execute("UPDATE watchlist SET last_checked=datetime('now'), score=?, max_score=? WHERE ticker=?",
+                     (scored.get("total_score", 0), scored.get("max_score", 24), ticker))
+        conn.execute("UPDATE portfolio SET last_kill_check=datetime('now') WHERE ticker=?", (ticker,))
         conn.commit()
-    
-    # Update last_checked
-    conn.execute("UPDATE watchlist SET last_checked=datetime('now'), score=?, max_score=? WHERE ticker=?",
-                 (scored.get("total_score", 0), scored.get("max_score", 24), ticker))
-    conn.execute("UPDATE portfolio SET last_kill_check=datetime('now') WHERE ticker=?", (ticker,))
-    conn.commit()
-    conn.close()
-    
+
     return alerts
 
 
 # ─── Baseline Metrics Storage ─────────────────────────────────────────────────
 
-def _save_baseline(conn, ticker: str, data: dict):
+def _save_baseline(ticker: str, data: dict):
     """Save current metrics as baseline for future comparison."""
     metrics = {
         "gross_margin": data.get("gross_margin"),
@@ -237,7 +225,7 @@ def _save_baseline(conn, ticker: str, data: dict):
     cache_file.write_text(json.dumps(metrics, indent=2))
 
 
-def _get_baseline(conn, ticker: str) -> dict | None:
+def _get_baseline(ticker: str) -> dict | None:
     """Load baseline metrics for comparison."""
     cache_file = Path(__file__).parent / "data" / "baselines" / f"{ticker}.json"
     if cache_file.exists():
