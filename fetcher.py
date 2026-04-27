@@ -10,6 +10,22 @@ from datetime import datetime
 logger = logging.getLogger(__name__)
 
 
+# ─── Pass Thresholds ──────────────────────────────────────────────────────────
+# Single source of truth for the binary "did this company qualify?" gates.
+# Score-band cutoffs (the 0/1/2/3 tiers) are kept inline in score_company since
+# they shape the grading curve rather than the pass/fail boundary.
+THRESHOLDS = {
+    "min_fcf_margin": 0.10,
+    "min_gross_margin": 0.40,            # broader than CSU — industrials with 40%+ qualify
+    "max_revenue_volatility_5y": 0.25,
+    "min_revenue_growth_3y": -0.05,
+    "max_revenue_growth_3y": 0.25,
+    "min_fcf_yield": 0.02,
+    "max_debt_to_equity": 2.0,
+    "min_market_cap_m": 200,
+}
+
+
 def fetch_company(ticker_str: str) -> dict | None:
     """Fetch financial data for a single ticker."""
     try:
@@ -98,43 +114,43 @@ def score_company(data: dict) -> dict:
     v = data.get("fcf_margin")
     if v is not None:
         scores["fcf_margin"] = 3 if v >= 0.20 else (2 if v >= 0.10 else (1 if v >= 0.05 else 0))
-        passes["fcf_margin"] = v >= 0.10
+        passes["fcf_margin"] = v >= THRESHOLDS["min_fcf_margin"]
 
     # 2. Gross Margin
     v = data.get("gross_margin")
     if v is not None:
         scores["gross_margin"] = 3 if v >= 0.70 else (2 if v >= 0.50 else (1 if v >= 0.30 else 0))
-        passes["gross_margin"] = v >= 0.40  # Broader than CSU — industrials with 40%+ can qualify
+        passes["gross_margin"] = v >= THRESHOLDS["min_gross_margin"]
 
     # 3. Revenue Stability
     v = data.get("revenue_volatility")
     if v is not None:
         scores["revenue_stability"] = 3 if v <= 0.10 else (2 if v <= 0.20 else (1 if v <= 0.30 else 0))
-        passes["revenue_stability"] = v <= 0.25
+        passes["revenue_stability"] = v <= THRESHOLDS["max_revenue_volatility_5y"]
 
     # 4. Growth Profile
     v = data.get("revenue_growth_3y")
     if v is not None:
         scores["growth_profile"] = 3 if 0.02 <= v <= 0.15 else (2 if v <= 0.02 else (1 if v <= 0.25 else 0))
-        passes["growth_profile"] = -0.05 <= v <= 0.25  # Broader range
+        passes["growth_profile"] = THRESHOLDS["min_revenue_growth_3y"] <= v <= THRESHOLDS["max_revenue_growth_3y"]
 
     # 5. FCF Yield
     v = data.get("fcf_yield")
     if v is not None:
         scores["fcf_yield"] = 3 if v >= 0.05 else (2 if v >= 0.03 else (1 if v >= 0.02 else 0))
-        passes["fcf_yield"] = v >= 0.02
+        passes["fcf_yield"] = v >= THRESHOLDS["min_fcf_yield"]
 
     # 6. Debt Discipline
     v = data.get("debt_to_equity")
     if v is not None:
         scores["debt_discipline"] = 3 if v <= 0.5 else (2 if v <= 1.0 else (1 if v <= 2.0 else 0))
-        passes["debt_discipline"] = v <= 2.0
+        passes["debt_discipline"] = v <= THRESHOLDS["max_debt_to_equity"]
 
     # 7. Size Fit
     v = data.get("market_cap_m")
     if v is not None:
         scores["size_fit"] = 3 if 500 <= v <= 10000 else (2 if 200 <= v < 500 or 10000 < v <= 50000 else 1)
-        passes["size_fit"] = v >= 200
+        passes["size_fit"] = v >= THRESHOLDS["min_market_cap_m"]
 
     # 8. Moat Quality (sector-aware heuristic)
     # High-margin industries = likely moat; low-margin = need to prove it
