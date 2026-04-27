@@ -3,8 +3,11 @@ Investment Process App — Data Fetcher
 Fetches company data from Yahoo Finance and scores against quality criteria.
 Broader than CSU — applicable to any sector with durable competitive advantages.
 """
+import logging
 import yfinance as yf
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 
 def fetch_company(ticker_str: str) -> dict | None:
@@ -31,8 +34,8 @@ def fetch_company(ticker_str: str) -> dict | None:
                         fcf_margin = fcf_absolute / total_revenue
                     if fcf_absolute and market_cap and market_cap > 0:
                         fcf_yield = fcf_absolute / market_cap
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("fcf parse failed for %s: %s", ticker_str, e)
 
         # Revenue growth
         revenue_growth = None
@@ -42,8 +45,8 @@ def fetch_company(ticker_str: str) -> dict | None:
                 rev = income.loc["Total Revenue"]
                 if len(rev) >= 2 and rev.iloc[-1] > 0:
                     revenue_growth = (rev.iloc[0] / rev.iloc[-1]) ** (1 / (len(rev) - 1)) - 1
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("revenue growth parse failed for %s: %s", ticker_str, e)
 
         # Revenue volatility
         revenue_volatility = None
@@ -53,8 +56,8 @@ def fetch_company(ticker_str: str) -> dict | None:
                 rev = income.loc["Total Revenue"].dropna()
                 if len(rev) >= 3 and rev.mean() != 0:
                     revenue_volatility = float(rev.std() / rev.mean())
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("revenue volatility parse failed for %s: %s", ticker_str, e)
 
         # EBIT margin
         ebit_margin = info.get("operatingMargins", 0) or 0
@@ -78,6 +81,7 @@ def fetch_company(ticker_str: str) -> dict | None:
             "fetched_at": datetime.now().isoformat(),
         }
     except Exception as e:
+        logger.debug("fetch_company failed for %s: %s", ticker_str, e)
         return None
 
 

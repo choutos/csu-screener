@@ -13,6 +13,7 @@ No API key required for basic discovery.
 """
 import csv
 import io
+import os
 import re
 import requests
 import json
@@ -223,7 +224,6 @@ def _apply_suffix(tickers: list[str], suffix: str) -> list[str]:
     if not suffix:
         return tickers
     return [t + suffix if not t.endswith(suffix) else t for t in tickers]
-    return []
 
 
 def _get_cached_tickers(index: str) -> list[str]:
