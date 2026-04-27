@@ -118,17 +118,18 @@ The value is in the *discipline* of the process, not any single score.
 
 ---
 
-### 8. Industry Fit (Vertical/Niche)
-*What CSU looks for: Software for a specific industry, not horizontal. Bus scheduling, not productivity suites.*
+### 8. Moat Quality (Durable Competitive Advantage)
+*What CSU looks for: A reason customers can't or won't leave. The clearest public-market proxy is gross margin — businesses with persistent pricing power keep more of every dollar.*
 
 | Score | Criteria |
 |-------|----------|
-| 3 | Direct vertical software (industry-specific) |
-| 2 | Adjacent (tech services, data, payments) |
-| 1 | Horizontal software (compete with big tech) |
-| 0 | Not software/tech |
+| 3 | Gross margin ≥ 60% (knowledge business — pricing power is structural) |
+| 2 | Gross margin ≥ 40% **OR** capital-intensive sector (Industrials, Energy, Materials, Real Estate) |
+| 0 | Gross margin < 40% **AND** not capital-intensive |
 
-**Why it matters:** Vertical = high switching cost + low competition + captive customers. Horizontal = the opposite.
+**Why it matters:** Vertical software is one path to a moat, but not the only one. Roper, TransDigm, and asset-heavy compounders earn theirs through scale, regulation, or installed base — their gross margins look thin next to software, so they get a pass when the sector itself is capital-intensive. Anything else without a margin moat needs to *prove* it qualitatively (see below).
+
+**Note:** Score 1 is intentionally unused — this KPI is closer to binary than the others. Either the moat is visible in the economics, or it isn't.
 
 ---
 
@@ -179,7 +180,7 @@ Score: X/24 | Fit: STRONG/MODERATE/WEAK/NOT FIT
 | FCF Yield | X | XX% |
 | Debt Discipline | X | X.XX D/E |
 | Size Fit | X | $XXM |
-| Industry Fit | X | [description] |
+| Moat Quality | X | [GM% / sector pass / qualitative] |
 
 ## Qualitative Assessment
 - Switching Cost Type: 
