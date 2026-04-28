@@ -4,7 +4,8 @@ import json
 from datetime import datetime
 
 from db import (add_to_portfolio, remove_from_portfolio, log_kill_signal,
-                update_portfolio_status, upsert_scan)
+                update_portfolio_status, upsert_scan,
+                add_to_position, update_position_cost_basis)
 from fetcher import score_company
 from smart_fetcher import fetch_company as smart_fetch
 from llm_advisor import check_portfolio_health
@@ -124,6 +125,9 @@ def _render_position_card(conn, row):
             if row["thesis"]:
                 st.write(f"**Thesis:** {row['thesis'][:100]}{'...' if len(row['thesis'])>100 else ''}")
 
+        # Buy more / edit cost basis
+        _render_edit_position(conn, row)
+
         # Kill signals (expandable)
         if row["kill_signals"]:
             with st.expander("\u26a0\ufe0f Kill Signals"):
@@ -141,6 +145,67 @@ def _render_position_card(conn, row):
             for kl in kill_logs:
                 sev_emoji = {"OK": "\u2705", "WARNING": "\u26a0\ufe0f", "CRITICAL": "\U0001f534"}.get(kl["severity"], "\u26aa")
                 st.caption(f"{sev_emoji} {kl['check_date'][:10]} \u2014 {kl['signal_type']}: {kl['details'][:80] if kl['details'] else ''} \u2192 {kl['action']}")
+
+
+def _render_edit_position(conn, row):
+    ticker = row["ticker"]
+    cur_shares = float(row["shares"] or 0)
+    cur_price = float(row["buy_price"] or 0)
+
+    with st.expander("\U0001f4b0 Buy more / Edit cost basis"):
+        tab_add, tab_edit = st.tabs(["Buy more shares", "Edit values directly"])
+
+        with tab_add:
+            c1, c2 = st.columns(2)
+            with c1:
+                add_shares = st.number_input(
+                    "Additional shares", min_value=0.0, step=0.1,
+                    key=f"add_shares_{ticker}",
+                )
+            with c2:
+                lot_price = st.number_input(
+                    "Price per share", min_value=0.0, step=0.01,
+                    key=f"lot_price_{ticker}",
+                )
+
+            if add_shares > 0 and lot_price > 0:
+                new_shares = cur_shares + add_shares
+                if cur_shares > 0 and cur_price > 0:
+                    new_avg = ((cur_shares * cur_price) + (add_shares * lot_price)) / new_shares
+                else:
+                    new_avg = lot_price
+                st.caption(
+                    f"Preview: {cur_shares:g} @ ${cur_price:.2f}  +  "
+                    f"{add_shares:g} @ ${lot_price:.2f}  →  "
+                    f"**{new_shares:g} @ ${new_avg:.2f}** avg"
+                )
+
+            disabled = add_shares <= 0 or lot_price <= 0
+            if st.button("Buy More", key=f"buy_more_{ticker}", disabled=disabled):
+                add_to_position(conn, ticker, add_shares, lot_price)
+                conn.commit()
+                st.success(f"Added {add_shares:g} shares of {ticker} @ ${lot_price:.2f}")
+                st.rerun()
+
+        with tab_edit:
+            c1, c2 = st.columns(2)
+            with c1:
+                edit_shares = st.number_input(
+                    "Shares", min_value=0.0, step=0.1, value=cur_shares,
+                    key=f"edit_shares_{ticker}",
+                )
+            with c2:
+                edit_price = st.number_input(
+                    "Buy price (avg)", min_value=0.0, step=0.01, value=cur_price,
+                    key=f"edit_price_{ticker}",
+                )
+
+            unchanged = edit_shares == cur_shares and edit_price == cur_price
+            if st.button("Save", key=f"edit_save_{ticker}", disabled=unchanged):
+                update_position_cost_basis(conn, ticker, edit_shares, edit_price)
+                conn.commit()
+                st.success(f"Updated {ticker}: {edit_shares:g} shares @ ${edit_price:.2f}")
+                st.rerun()
 
 
 def _render_health_check(conn, row):

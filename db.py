@@ -194,6 +194,34 @@ def update_portfolio_status(conn, ticker: str, status: str):
                  (status, ticker))
 
 
+def add_to_position(conn, ticker: str, additional_shares: float, price_per_share: float):
+    """Record an additional lot. Increments shares and recomputes weighted-average buy_price."""
+    row = conn.execute("SELECT shares, buy_price FROM portfolio WHERE ticker=?", (ticker,)).fetchone()
+    if not row:
+        return
+    cur_shares = row["shares"] or 0
+    cur_price = row["buy_price"] or 0
+    new_shares = cur_shares + additional_shares
+    if new_shares <= 0:
+        return
+    if cur_shares > 0 and cur_price > 0:
+        new_avg = ((cur_shares * cur_price) + (additional_shares * price_per_share)) / new_shares
+    else:
+        new_avg = price_per_share
+    conn.execute(
+        "UPDATE portfolio SET shares=?, buy_price=?, updated_at=datetime('now') WHERE ticker=?",
+        (new_shares, new_avg, ticker),
+    )
+
+
+def update_position_cost_basis(conn, ticker: str, shares: float, buy_price: float):
+    """Overwrite shares and buy_price directly (corrections / manual edits)."""
+    conn.execute(
+        "UPDATE portfolio SET shares=?, buy_price=?, updated_at=datetime('now') WHERE ticker=?",
+        (shares, buy_price, ticker),
+    )
+
+
 def remove_from_watchlist(conn, ticker: str):
     conn.execute("DELETE FROM watchlist WHERE ticker=?", (ticker,))
     conn.execute("UPDATE scan_results SET in_watchlist=0 WHERE ticker=?", (ticker,))
