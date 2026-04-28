@@ -70,11 +70,20 @@ def _call_llm(system_prompt: str, user_prompt: str, config: dict = None) -> Opti
                 {"role": "user", "content": user_prompt},
             ],
             temperature=0.3,
-            max_tokens=3000,
+            max_tokens=8000,
         )
-        content = response.choices[0].message.content.strip()
+        message = response.choices[0].message
+        content = (message.content or "").strip()
         if not content:
-            logger.warning(f"LLM returned empty content for model {cfg['model']}")
+            finish_reason = getattr(response.choices[0], "finish_reason", "?")
+            thinking = getattr(message, "thinking", None) or getattr(message, "reasoning_content", None)
+            thinking_len = len(thinking) if thinking else 0
+            logger.warning(
+                "LLM returned empty content for model %s "
+                "(finish_reason=%s, thinking_len=%d). First 200 chars of thinking: %r",
+                cfg["model"], finish_reason, thinking_len,
+                (thinking[:200] if thinking else None),
+            )
             return None
         return content
     except Exception as e:
