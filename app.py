@@ -7,7 +7,7 @@ Run: streamlit run app.py
 import streamlit as st
 from smart_fetcher import get_data_source
 
-from pages import portfolio, watchlist, discovery, settings
+from views import portfolio, watchlist, discovery, settings
 
 # ─── Page Config ──────────────────────────────────────────────────────────────
 st.set_page_config(page_title="Invest Process", page_icon="🎩", layout="wide")

@@ -6,7 +6,7 @@ from db import (add_to_watchlist, remove_from_watchlist, move_to_portfolio, upse
 from fetcher import score_company
 from smart_fetcher import fetch_company as smart_fetch, calculate_buy_under
 from llm_advisor import generate_analysis
-from pages.helpers import get_shared_db, render_score_breakdown, backfill_metadata
+from views.helpers import get_shared_db, render_score_breakdown, backfill_metadata
 
 
 def render():

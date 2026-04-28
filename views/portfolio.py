@@ -9,7 +9,7 @@ from db import (add_to_portfolio, remove_from_portfolio, log_kill_signal,
 from fetcher import score_company
 from smart_fetcher import fetch_company as smart_fetch
 from llm_advisor import check_portfolio_health
-from pages.helpers import get_shared_db, render_score_breakdown, backfill_metadata
+from views.helpers import get_shared_db, render_score_breakdown, backfill_metadata
 
 
 def render():
