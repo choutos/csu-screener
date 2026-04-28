@@ -378,10 +378,27 @@ def test_connection(config: dict = None) -> tuple[bool, str]:
         response = client.chat.completions.create(
             model=cfg["model"],
             messages=[{"role": "user", "content": "Reply with exactly: OK"}],
-            max_tokens=10,
+            max_tokens=4000,
             temperature=0,
         )
-        text = response.choices[0].message.content.strip()
-        return True, f"Connected! Model: {cfg['model']}, Response: {text}"
+        choice = response.choices[0]
+        message = choice.message
+        content = (message.content or "").strip()
+        if content:
+            return True, f"Connected! Model: {cfg['model']}, Response: {content}"
+
+        # Reasoning models may emit only thinking before the budget runs out.
+        thinking = getattr(message, "thinking", None) or getattr(message, "reasoning_content", None)
+        finish_reason = getattr(choice, "finish_reason", "?")
+        if thinking:
+            return True, (
+                f"Connected! Model: {cfg['model']} (no visible content; "
+                f"finish_reason={finish_reason}). Thinking: {thinking}"
+            )
+        return False, (
+            f"Model {cfg['model']} returned empty content "
+            f"(finish_reason={finish_reason}, no thinking field). "
+            "Try a larger max_tokens or a non-reasoning model."
+        )
     except Exception as e:
         return False, f"Connection failed: {e}"
