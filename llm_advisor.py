@@ -172,11 +172,11 @@ def generate_analysis(data: dict, config: dict = None) -> Optional[dict]:
         lines = cleaned.split("\n")
         cleaned = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
     
+    parsed = None
     try:
         parsed = json.loads(cleaned)
     except json.JSONDecodeError:
         # Try to find the outermost JSON object (handles nested structures)
-        import re
         depth = 0
         start = None
         for i, ch in enumerate(cleaned):
