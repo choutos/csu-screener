@@ -6,7 +6,7 @@ from pathlib import Path
 from db import add_to_watchlist
 from llm_advisor import (load_config as load_llm_config, save_config as save_llm_config,
                           test_connection as test_llm_connection)
-from pages.helpers import get_shared_db
+from views.helpers import get_shared_db
 
 
 def render():
