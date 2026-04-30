@@ -44,7 +44,7 @@ def _render_bulk_import(conn):
     st.caption("Import tickers from the csu-screener watchlist.json")
 
     if st.button("Import Watchlist from Screener"):
-        wl_path = Path(__file__).parent.parent / "screener" / "watchlist.json"
+        wl_path = Path(__file__).parent.parent / "watchlist.json"
         if wl_path.exists():
             with open(wl_path) as f:
                 wl = json.load(f)

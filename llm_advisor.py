@@ -324,7 +324,6 @@ def check_portfolio_health(data: dict, thesis: str, kill_signals: str, config: d
     try:
         parsed = json.loads(cleaned)
     except json.JSONDecodeError:
-        import re
         # Try to find the outermost JSON object (handles nested {} inside arrays)
         depth = 0
         start = None

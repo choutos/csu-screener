@@ -150,6 +150,7 @@ def upsert_scan(conn, data: dict):
         data["ticker"], data["ticker"],
         datetime.now().isoformat(),
     ))
+    conn.commit()
 
 
 def add_to_watchlist(conn, ticker: str, name: str = "", buy_under: float = None,
@@ -163,6 +164,7 @@ def add_to_watchlist(conn, ticker: str, name: str = "", buy_under: float = None,
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, datetime('now'))
     """, (ticker, name, sector, industry, buy_under, score, max_score,
           thesis, kill_signals, priority, source, notes))
+    conn.commit()
 
 
 def add_to_portfolio(conn, ticker: str, name: str = "", buy_price: float = None,
@@ -179,6 +181,7 @@ def add_to_portfolio(conn, ticker: str, name: str = "", buy_price: float = None,
     # Mark in scan_results
     conn.execute("UPDATE scan_results SET in_portfolio=1 WHERE ticker=?", (ticker,))
     conn.execute("UPDATE scan_results SET in_watchlist=0 WHERE ticker=?", (ticker,))
+    conn.commit()
 
 
 def log_kill_signal(conn, ticker: str, signal_type: str, severity: str,
@@ -187,11 +190,13 @@ def log_kill_signal(conn, ticker: str, signal_type: str, severity: str,
         INSERT INTO kill_signal_log (ticker, signal_type, severity, details, action, current_price)
         VALUES (?, ?, ?, ?, ?, ?)
     """, (ticker, signal_type, severity, details, action, current_price))
+    conn.commit()
 
 
 def update_portfolio_status(conn, ticker: str, status: str):
     conn.execute("UPDATE portfolio SET status=?, updated_at=datetime('now') WHERE ticker=?",
                  (status, ticker))
+    conn.commit()
 
 
 def add_to_position(conn, ticker: str, additional_shares: float, price_per_share: float):
@@ -212,6 +217,7 @@ def add_to_position(conn, ticker: str, additional_shares: float, price_per_share
         "UPDATE portfolio SET shares=?, buy_price=?, updated_at=datetime('now') WHERE ticker=?",
         (new_shares, new_avg, ticker),
     )
+    conn.commit()
 
 
 def update_position_cost_basis(conn, ticker: str, shares: float, buy_price: float):
@@ -220,16 +226,19 @@ def update_position_cost_basis(conn, ticker: str, shares: float, buy_price: floa
         "UPDATE portfolio SET shares=?, buy_price=?, updated_at=datetime('now') WHERE ticker=?",
         (shares, buy_price, ticker),
     )
+    conn.commit()
 
 
 def remove_from_watchlist(conn, ticker: str):
     conn.execute("DELETE FROM watchlist WHERE ticker=?", (ticker,))
     conn.execute("UPDATE scan_results SET in_watchlist=0 WHERE ticker=?", (ticker,))
+    conn.commit()
 
 
 def remove_from_portfolio(conn, ticker: str):
     conn.execute("DELETE FROM portfolio WHERE ticker=?", (ticker,))
     conn.execute("UPDATE scan_results SET in_portfolio=0 WHERE ticker=?", (ticker,))
+    conn.commit()
 
 
 def move_to_portfolio(conn, ticker: str, buy_price: float = None, shares: float = 0):
@@ -250,6 +259,7 @@ def move_to_watchlist(conn, ticker: str, buy_under: float = None):
                          row["score"], row["max_score"], source="scan",
                          sector=row["sector"], industry=row["industry"])
         conn.execute("UPDATE scan_results SET in_watchlist=1 WHERE ticker=?", (ticker,))
+        conn.commit()
 
 
 # Initialize on import
