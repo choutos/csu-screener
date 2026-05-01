@@ -9,6 +9,9 @@ from llm_advisor import (load_config as load_llm_config, save_config as save_llm
 from views.helpers import get_shared_db
 
 
+WATCHLIST_IMPORT_PATH = Path(__file__).parent.parent / "watchlist.json"
+
+
 def render():
     st.title("\u2699\ufe0f Settings")
 
@@ -44,7 +47,7 @@ def _render_bulk_import(conn):
     st.caption("Import tickers from the csu-screener watchlist.json")
 
     if st.button("Import Watchlist from Screener"):
-        wl_path = Path(__file__).parent.parent / "screener" / "watchlist.json"
+        wl_path = WATCHLIST_IMPORT_PATH
         if wl_path.exists():
             with open(wl_path) as f:
                 wl = json.load(f)

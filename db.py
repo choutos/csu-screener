@@ -2,11 +2,12 @@
 Investment Process App — Database Layer
 SQLite backend for portfolio, watchlist, and scan management.
 """
+import os
 import sqlite3
 from datetime import datetime
 from pathlib import Path
 
-DB_PATH = Path(__file__).parent / "invest.db"
+DB_PATH = Path(os.environ.get("CSU_DB_PATH", Path(__file__).parent / "invest.db"))
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS portfolio (
@@ -57,6 +58,7 @@ CREATE TABLE IF NOT EXISTS scan_results (
     gross_margin REAL,
     fcf_margin REAL,
     fcf_yield REAL,
+    total_revenue_m REAL,
     debt_to_equity REAL,
     revenue_growth_3y REAL,
     revenue_volatility REAL,
@@ -91,7 +93,12 @@ CREATE TABLE IF NOT EXISTS price_snapshots (
 
 
 def get_db() -> sqlite3.Connection:
-    conn = sqlite3.connect(str(DB_PATH), timeout=30, check_same_thread=False)
+    conn = sqlite3.connect(
+        str(DB_PATH),
+        timeout=30,
+        check_same_thread=False,
+        isolation_level=None,
+    )
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
@@ -115,16 +122,24 @@ def init_db():
         conn.execute("ALTER TABLE portfolio ADD COLUMN score_breakdown TEXT")
     except Exception:
         pass
+    try:
+        conn.execute("ALTER TABLE scan_results ADD COLUMN total_revenue_m REAL")
+    except Exception:
+        pass
+    user_version = conn.execute("PRAGMA user_version").fetchone()[0]
+    if user_version < 1:
+        conn.execute("UPDATE scan_results SET debt_to_equity = debt_to_equity / 100 WHERE debt_to_equity > 5")
+        conn.execute("PRAGMA user_version = 1")
     conn.close()
 
 
 def upsert_scan(conn, data: dict):
     conn.execute("""
         INSERT INTO scan_results (ticker, name, sector, industry, market_cap_m,
-            gross_margin, fcf_margin, fcf_yield, debt_to_equity,
+            gross_margin, fcf_margin, fcf_yield, total_revenue_m, debt_to_equity,
             revenue_growth_3y, revenue_volatility, score, max_score, csu_fit,
             price, currency, in_portfolio, in_watchlist, scanned_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
             (SELECT COUNT(*) FROM portfolio WHERE ticker=?),
             (SELECT COUNT(*) FROM watchlist WHERE ticker=?),
             ?)
@@ -132,6 +147,7 @@ def upsert_scan(conn, data: dict):
             name=excluded.name, sector=excluded.sector, industry=excluded.industry,
             market_cap_m=excluded.market_cap_m, gross_margin=excluded.gross_margin,
             fcf_margin=excluded.fcf_margin, fcf_yield=excluded.fcf_yield,
+            total_revenue_m=excluded.total_revenue_m,
             debt_to_equity=excluded.debt_to_equity,
             revenue_growth_3y=excluded.revenue_growth_3y,
             revenue_volatility=excluded.revenue_volatility,
@@ -143,13 +159,14 @@ def upsert_scan(conn, data: dict):
         data["ticker"], data.get("name", ""), data.get("sector", ""),
         data.get("industry", ""), data.get("market_cap_m"),
         data.get("gross_margin"), data.get("fcf_margin"), data.get("fcf_yield"),
-        data.get("debt_to_equity"), data.get("revenue_growth_3y"),
+        data.get("total_revenue_m"), data.get("debt_to_equity"), data.get("revenue_growth_3y"),
         data.get("revenue_volatility"), data.get("total_score", 0),
         data.get("max_score", 24), data.get("csu_fit", ""),
         data.get("price"), data.get("currency", "USD"),
         data["ticker"], data["ticker"],
         datetime.now().isoformat(),
     ))
+    conn.commit()
 
 
 def add_to_watchlist(conn, ticker: str, name: str = "", buy_under: float = None,
@@ -163,6 +180,7 @@ def add_to_watchlist(conn, ticker: str, name: str = "", buy_under: float = None,
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, datetime('now'))
     """, (ticker, name, sector, industry, buy_under, score, max_score,
           thesis, kill_signals, priority, source, notes))
+    conn.commit()
 
 
 def add_to_portfolio(conn, ticker: str, name: str = "", buy_price: float = None,
@@ -179,6 +197,7 @@ def add_to_portfolio(conn, ticker: str, name: str = "", buy_price: float = None,
     # Mark in scan_results
     conn.execute("UPDATE scan_results SET in_portfolio=1 WHERE ticker=?", (ticker,))
     conn.execute("UPDATE scan_results SET in_watchlist=0 WHERE ticker=?", (ticker,))
+    conn.commit()
 
 
 def log_kill_signal(conn, ticker: str, signal_type: str, severity: str,
@@ -187,11 +206,13 @@ def log_kill_signal(conn, ticker: str, signal_type: str, severity: str,
         INSERT INTO kill_signal_log (ticker, signal_type, severity, details, action, current_price)
         VALUES (?, ?, ?, ?, ?, ?)
     """, (ticker, signal_type, severity, details, action, current_price))
+    conn.commit()
 
 
 def update_portfolio_status(conn, ticker: str, status: str):
     conn.execute("UPDATE portfolio SET status=?, updated_at=datetime('now') WHERE ticker=?",
                  (status, ticker))
+    conn.commit()
 
 
 def add_to_position(conn, ticker: str, additional_shares: float, price_per_share: float):
@@ -212,6 +233,7 @@ def add_to_position(conn, ticker: str, additional_shares: float, price_per_share
         "UPDATE portfolio SET shares=?, buy_price=?, updated_at=datetime('now') WHERE ticker=?",
         (new_shares, new_avg, ticker),
     )
+    conn.commit()
 
 
 def update_position_cost_basis(conn, ticker: str, shares: float, buy_price: float):
@@ -220,16 +242,19 @@ def update_position_cost_basis(conn, ticker: str, shares: float, buy_price: floa
         "UPDATE portfolio SET shares=?, buy_price=?, updated_at=datetime('now') WHERE ticker=?",
         (shares, buy_price, ticker),
     )
+    conn.commit()
 
 
 def remove_from_watchlist(conn, ticker: str):
     conn.execute("DELETE FROM watchlist WHERE ticker=?", (ticker,))
     conn.execute("UPDATE scan_results SET in_watchlist=0 WHERE ticker=?", (ticker,))
+    conn.commit()
 
 
 def remove_from_portfolio(conn, ticker: str):
     conn.execute("DELETE FROM portfolio WHERE ticker=?", (ticker,))
     conn.execute("UPDATE scan_results SET in_portfolio=0 WHERE ticker=?", (ticker,))
+    conn.commit()
 
 
 def move_to_portfolio(conn, ticker: str, buy_price: float = None, shares: float = 0):
@@ -250,6 +275,7 @@ def move_to_watchlist(conn, ticker: str, buy_under: float = None):
                          row["score"], row["max_score"], source="scan",
                          sector=row["sector"], industry=row["industry"])
         conn.execute("UPDATE scan_results SET in_watchlist=1 WHERE ticker=?", (ticker,))
+        conn.commit()
 
 
 # Initialize on import

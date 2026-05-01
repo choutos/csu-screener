@@ -184,6 +184,7 @@ def _render_refresh(conn, row):
                     if bu and bu.get("buy_under_per_share"):
                         conn.execute("UPDATE watchlist SET buy_under=?, updated_at=datetime('now') WHERE ticker=?",
                                      (bu["buy_under_per_share"], row["ticker"]))
+                        conn.commit()
                 st.rerun()
 
 

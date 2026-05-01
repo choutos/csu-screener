@@ -17,10 +17,9 @@ import os
 import re
 import requests
 import json
-from db import get_db, upsert_scan
-from fetcher import fetch_company, score_company
+from db import get_db
+from fetcher import score_company
 from smart_fetcher import is_ib_available, fetch_company as smart_fetch
-from datetime import datetime
 from pathlib import Path
 
 
@@ -373,7 +372,7 @@ def refresh_etf_holdings(etfs: list[str] = None) -> dict[str, int | str]:
 
 def ibkr_scan(scanner_type: str = "high_margins") -> list[dict] | None:
     """Use IBKR's built-in scanner. Only works when opted in AND Gateway is connected."""
-    if not os.environ.get("CSU_USE_IBKR", "").lower() in ("1", "true", "yes"):
+    if os.environ.get("CSU_USE_IBKR", "").lower() not in ("1", "true", "yes"):
         return None
     if not is_ib_available():
         return None

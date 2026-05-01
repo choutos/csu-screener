@@ -15,7 +15,6 @@ yfinance fallback:
 """
 import logging
 import os
-from datetime import datetime
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -209,7 +208,7 @@ def _fetch_from_ibkr(ticker: str) -> Optional[dict]:
     """Fetch comprehensive company data from IB Gateway."""
     _ensure_event_loop()
     try:
-        from ib_insync import IB, Stock, util
+        from ib_insync import Stock, util
         util.startLoop()
     except ImportError:
         return None
@@ -262,7 +261,7 @@ def _fetch_batch_ibkr(tickers: list[str]) -> Optional[list[dict]]:
     """Fetch multiple companies from IBKR."""
     _ensure_event_loop()
     try:
-        from ib_insync import Stock, util
+        from ib_insync import util
         util.startLoop()
     except ImportError:
         return None
@@ -281,6 +280,19 @@ def _fetch_batch_ibkr(tickers: list[str]) -> Optional[list[dict]]:
     except Exception as e:
         logger.warning(f"IBKR batch failed: {e}")
         return None
+
+
+def _normalize_debt_to_equity(value) -> Optional[float]:
+    """Normalize debt/equity values to ratio units.
+
+    yfinance usually reports percent values (75 = 0.75), while IBKR may report
+    either percent or ratio depending on the feed. Use the same defensive
+    heuristic for both paths.
+    """
+    if value is None:
+        return None
+    val = float(value)
+    return round(val / 100, 2) if val > 1 else round(val, 2)
 
 
 def _parse_ibkr_fundamentals(xml_data: str) -> dict:
@@ -305,7 +317,7 @@ def _parse_ibkr_fundamentals(xml_data: str) -> dict:
             if key == "gross_margin":
                 result["gross_margin"] = round(val / 100, 3) if val > 1 else round(val, 3)
             elif key == "debt_to_equity":
-                result["debt_to_equity"] = round(val, 2)
+                result["debt_to_equity"] = _normalize_debt_to_equity(val)
             elif key == "revenue_growth":
                 result["revenue_growth_3y"] = round(val, 3)
     
@@ -321,7 +333,7 @@ def ibkr_scan(scanner_params: dict) -> Optional[list[dict]]:
     Only available when IB Gateway is connected.
     """
     try:
-        from ib_insync import IB, ScannerSubscription, Stock
+        from ib_insync import ScannerSubscription
         ib = get_ib_connection()
         if not ib:
             return None
@@ -376,12 +388,13 @@ def _fetch_from_yfinance(ticker: str) -> Optional[dict]:
             "sector": info.get("sector", ""),
             "industry": info.get("industry", ""),
             "market_cap_m": round((info.get("marketCap") or 0) / 1e6, 1) or None,
+            "total_revenue_m": round((info.get("totalRevenue") or 0) / 1e6, 1) or None,
             "price": info.get("regularMarketPrice") or info.get("currentPrice"),
             "currency": info.get("currency", "USD"),
             "gross_margin": round(info.get("grossMargins", 0) or 0, 3) if info.get("grossMargins") else None,
             "fcf_margin": None,
             "fcf_yield": None,
-            "debt_to_equity": round(info.get("debtToEquity", 0) or 0, 2) if info.get("debtToEquity") else None,
+            "debt_to_equity": _normalize_debt_to_equity(info.get("debtToEquity")),
             "revenue_growth_3y": round(info.get("revenueGrowth", 0) or 0, 3) if info.get("revenueGrowth") else None,
             "revenue_volatility": None,
         }
@@ -448,11 +461,17 @@ def calculate_buy_under(ticker: str, data: dict = None) -> Optional[dict]:
     if not price or not mcap or not fcf_margin:
         return None
     
-    # Calculate current FCF
-    fcf = fcf_margin * mcap / (fcf_margin + (1 - fcf_margin))  # Approximate
+    # Calculate current FCF. Prefer direct FCF yield. If unavailable, use
+    # FCF margin × revenue when revenue is present. Do not infer FCF from
+    # market cap + margin: that silently treats margin as yield.
+    revenue = (data.get("total_revenue_m") or 0) * 1e6
     if fcf_yield and mcap > 0:
-        fcf = fcf_yield * mcap  # More accurate if we have this
-    
+        fcf = fcf_yield * mcap
+    elif revenue > 0:
+        fcf = fcf_margin * revenue
+    else:
+        return None
+
     if fcf <= 0:
         return None
     

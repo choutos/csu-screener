@@ -8,7 +8,7 @@ from smart_fetcher import fetch_company as smart_fetch, calculate_buy_under, get
 from llm_advisor import generate_analysis
 from discovery import (get_api_key, save_api_key, test_fmp_key, run_discovery,
                        get_available_ticker_count, get_index_stats, refresh_index_cache,
-                       refresh_etf_holdings, PRESETS, INDEX_SOURCES, ETF_SOURCES)
+                       refresh_etf_holdings, INDEX_SOURCES)
 from views.helpers import get_shared_db
 
 
