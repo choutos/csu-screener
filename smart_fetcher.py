@@ -304,7 +304,7 @@ def _parse_ibkr_fundamentals(xml_data: str) -> dict:
             if key == "gross_margin":
                 result["gross_margin"] = round(val / 100, 3) if val > 1 else round(val, 3)
             elif key == "debt_to_equity":
-                result["debt_to_equity"] = round(val, 2)
+                result["debt_to_equity"] = round(val / 100, 2) if val > 1 else round(val, 2)
             elif key == "revenue_growth":
                 result["revenue_growth_3y"] = round(val, 3)
     

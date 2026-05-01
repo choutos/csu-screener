@@ -1,4 +1,5 @@
 import importlib.util
+import os
 import sqlite3
 import sys
 import tempfile
@@ -6,9 +7,11 @@ import types
 import unittest
 from pathlib import Path
 
+os.environ["CSU_DB_PATH"] = str(Path(tempfile.mkdtemp()) / "invest.db")
+
 import db
 from fetcher import score_company
-from smart_fetcher import calculate_buy_under
+from smart_fetcher import _parse_ibkr_fundamentals, calculate_buy_under
 
 
 class CoreFixTests(unittest.TestCase):
@@ -141,6 +144,46 @@ class CoreFixTests(unittest.TestCase):
                     conn.close()
                     tmp.close()
 
+    def test_init_db_migrates_revenue_and_legacy_debt_to_equity(self):
+        original_db_path = db.DB_PATH
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db.DB_PATH = Path(tmpdir) / "legacy.db"
+            conn = sqlite3.connect(db.DB_PATH)
+            try:
+                conn.execute("""
+                    CREATE TABLE scan_results (
+                        ticker TEXT PRIMARY KEY,
+                        name TEXT NOT NULL,
+                        debt_to_equity REAL
+                    )
+                """)
+                conn.execute(
+                    "INSERT INTO scan_results (ticker, name, debt_to_equity) VALUES (?, ?, ?)",
+                    ("OLD", "Legacy Co", 75),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+            try:
+                db.init_db()
+                migrated = sqlite3.connect(db.DB_PATH)
+                try:
+                    columns = [
+                        row[1]
+                        for row in migrated.execute("PRAGMA table_info(scan_results)").fetchall()
+                    ]
+                    row = migrated.execute(
+                        "SELECT debt_to_equity, total_revenue_m FROM scan_results WHERE ticker='OLD'"
+                    ).fetchone()
+                finally:
+                    migrated.close()
+
+                self.assertIn("total_revenue_m", columns)
+                self.assertEqual(row, (0.75, None))
+            finally:
+                db.DB_PATH = original_db_path
+
     def test_settings_import_uses_root_watchlist_path(self):
         streamlit_stub = types.ModuleType("streamlit")
         streamlit_stub.cache_resource = lambda func=None, **_kwargs: (
@@ -176,6 +219,13 @@ class CoreFixTests(unittest.TestCase):
             else:
                 sys.modules["llm_advisor"] = original_llm
 
+    def test_ibkr_debt_to_equity_is_normalized_like_yfinance(self):
+        percent_result = _parse_ibkr_fundamentals("<DebtToEquity>75</DebtToEquity>")
+        ratio_result = _parse_ibkr_fundamentals("<DebtToEquity>0.75</DebtToEquity>")
+
+        self.assertEqual(percent_result["debt_to_equity"], 0.75)
+        self.assertEqual(ratio_result["debt_to_equity"], 0.75)
+
     def test_debt_to_equity_threshold_expects_ratio_not_percent(self):
         scored = score_company(
             {
@@ -207,6 +257,31 @@ class CoreFixTests(unittest.TestCase):
                 "revenue_growth_3y": 0.05,
             },
         )
+
+        self.assertIsNotNone(result)
+        self.assertGreater(result["buy_under_per_share"], 0)
+
+    def test_upsert_scan_persists_total_revenue_for_buy_under_round_trip(self):
+        tmp, conn = self._new_db()
+        try:
+            db.upsert_scan(
+                conn,
+                {
+                    "ticker": "REV",
+                    "name": "Revenue Co",
+                    "price": 10,
+                    "market_cap_m": 1_000,
+                    "total_revenue_m": 500,
+                    "fcf_margin": 0.2,
+                    "fcf_yield": None,
+                    "revenue_growth_3y": 0.05,
+                },
+            )
+            row = conn.execute("SELECT * FROM scan_results WHERE ticker='REV'").fetchone()
+            result = calculate_buy_under("REV", dict(row))
+        finally:
+            conn.close()
+            tmp.close()
 
         self.assertIsNotNone(result)
         self.assertGreater(result["buy_under_per_share"], 0)
