@@ -1,6 +1,10 @@
+import importlib.util
 import sqlite3
+import sys
 import tempfile
+import types
 import unittest
+from pathlib import Path
 
 import db
 from fetcher import score_company
@@ -8,19 +12,169 @@ from smart_fetcher import calculate_buy_under
 
 
 class CoreFixTests(unittest.TestCase):
-    def test_add_to_watchlist_commits_write(self):
-        with tempfile.NamedTemporaryFile() as tmp:
-            conn = sqlite3.connect(tmp.name)
-            conn.row_factory = sqlite3.Row
-            conn.executescript(db.SCHEMA)
+    def _new_db(self):
+        tmp = tempfile.NamedTemporaryFile()
+        conn = sqlite3.connect(tmp.name)
+        conn.row_factory = sqlite3.Row
+        conn.executescript(db.SCHEMA)
+        return tmp, conn
 
-            db.add_to_watchlist(conn, "TEST", "Test Co", priority="HIGH")
+    def _assert_visible_from_new_connection(self, db_path, query, params=()):
+        second_conn = sqlite3.connect(db_path)
+        try:
+            row = second_conn.execute(query, params).fetchone()
+        finally:
+            second_conn.close()
+        self.assertIsNotNone(row)
+        return row
 
-            second_conn = sqlite3.connect(tmp.name)
-            row = second_conn.execute(
-                "SELECT ticker, name, priority FROM watchlist WHERE ticker=?", ("TEST",)
-            ).fetchone()
-            self.assertEqual(row, ("TEST", "Test Co", "HIGH"))
+    def test_get_db_uses_autocommit_for_direct_ui_writes(self):
+        original_db_path = db.DB_PATH
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db.DB_PATH = Path(tmpdir) / "invest.db"
+            try:
+                conn = db.get_db()
+                conn.executescript(db.SCHEMA)
+                conn.execute(
+                    "INSERT INTO price_snapshots (ticker, price) VALUES (?, ?)",
+                    ("TEST", 123.45),
+                )
+
+                row = self._assert_visible_from_new_connection(
+                    db.DB_PATH,
+                    "SELECT ticker, price FROM price_snapshots WHERE ticker=?",
+                    ("TEST",),
+                )
+                self.assertEqual(row, ("TEST", 123.45))
+                self.assertIsNone(conn.isolation_level)
+            finally:
+                db.DB_PATH = original_db_path
+                conn.close()
+
+    def test_write_helpers_commit_their_mutations(self):
+        cases = [
+            (
+                "upsert_scan",
+                lambda conn: db.upsert_scan(conn, {"ticker": "UPS", "name": "Upsert Co"}),
+                "SELECT ticker FROM scan_results WHERE ticker='UPS'",
+            ),
+            (
+                "add_to_watchlist",
+                lambda conn: db.add_to_watchlist(conn, "WAT", "Watch Co", priority="HIGH"),
+                "SELECT ticker FROM watchlist WHERE ticker='WAT'",
+            ),
+            (
+                "add_to_portfolio",
+                lambda conn: db.add_to_portfolio(conn, "POR", "Portfolio Co", shares=1),
+                "SELECT ticker FROM portfolio WHERE ticker='POR'",
+            ),
+            (
+                "log_kill_signal",
+                lambda conn: db.log_kill_signal(conn, "SIG", "OTHER", "WARNING", "details", "WATCH"),
+                "SELECT ticker FROM kill_signal_log WHERE ticker='SIG'",
+            ),
+            (
+                "update_portfolio_status",
+                lambda conn: (
+                    db.add_to_portfolio(conn, "STA", "Status Co"),
+                    db.update_portfolio_status(conn, "STA", "SELL"),
+                ),
+                "SELECT ticker FROM portfolio WHERE ticker='STA' AND status='SELL'",
+            ),
+            (
+                "add_to_position",
+                lambda conn: (
+                    db.add_to_portfolio(conn, "ADD", "Add Co", buy_price=10, shares=2),
+                    db.add_to_position(conn, "ADD", 2, 20),
+                ),
+                "SELECT ticker FROM portfolio WHERE ticker='ADD' AND shares=4 AND buy_price=15",
+            ),
+            (
+                "update_position_cost_basis",
+                lambda conn: (
+                    db.add_to_portfolio(conn, "BAS", "Basis Co"),
+                    db.update_position_cost_basis(conn, "BAS", 3, 42),
+                ),
+                "SELECT ticker FROM portfolio WHERE ticker='BAS' AND shares=3 AND buy_price=42",
+            ),
+            (
+                "remove_from_watchlist",
+                lambda conn: (
+                    db.add_to_watchlist(conn, "RWL", "Remove Watch Co"),
+                    db.remove_from_watchlist(conn, "RWL"),
+                ),
+                "SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM watchlist WHERE ticker='RWL')",
+            ),
+            (
+                "remove_from_portfolio",
+                lambda conn: (
+                    db.add_to_portfolio(conn, "RPF", "Remove Portfolio Co"),
+                    db.remove_from_portfolio(conn, "RPF"),
+                ),
+                "SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM portfolio WHERE ticker='RPF')",
+            ),
+            (
+                "move_to_portfolio",
+                lambda conn: (
+                    db.add_to_watchlist(conn, "MTP", "Move Portfolio Co"),
+                    db.move_to_portfolio(conn, "MTP", buy_price=9, shares=1),
+                ),
+                "SELECT ticker FROM portfolio WHERE ticker='MTP'",
+            ),
+            (
+                "move_to_watchlist",
+                lambda conn: (
+                    db.upsert_scan(conn, {"ticker": "MTW", "name": "Move Watch Co"}),
+                    db.move_to_watchlist(conn, "MTW", buy_under=8),
+                ),
+                "SELECT ticker FROM watchlist WHERE ticker='MTW'",
+            ),
+        ]
+
+        for name, op, query in cases:
+            with self.subTest(name=name):
+                tmp, conn = self._new_db()
+                try:
+                    op(conn)
+                    self._assert_visible_from_new_connection(tmp.name, query)
+                finally:
+                    conn.close()
+                    tmp.close()
+
+    def test_settings_import_uses_root_watchlist_path(self):
+        streamlit_stub = types.ModuleType("streamlit")
+        streamlit_stub.cache_resource = lambda func=None, **_kwargs: (
+            func if func is not None else lambda wrapped: wrapped
+        )
+        llm_stub = types.ModuleType("llm_advisor")
+        llm_stub.load_config = lambda: {}
+        llm_stub.save_config = lambda config: None
+        llm_stub.test_connection = lambda config: False
+
+        original_streamlit = sys.modules.get("streamlit")
+        original_llm = sys.modules.get("llm_advisor")
+        sys.modules["streamlit"] = streamlit_stub
+        sys.modules["llm_advisor"] = llm_stub
+        try:
+            settings_path = Path(__file__).resolve().parents[1] / "views" / "settings.py"
+            spec = importlib.util.spec_from_file_location("settings_under_test", settings_path)
+            settings = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(settings)
+
+            self.assertEqual(
+                settings.WATCHLIST_IMPORT_PATH,
+                Path(__file__).resolve().parents[1] / "watchlist.json",
+            )
+            self.assertTrue(settings.WATCHLIST_IMPORT_PATH.exists())
+        finally:
+            if original_streamlit is None:
+                sys.modules.pop("streamlit", None)
+            else:
+                sys.modules["streamlit"] = original_streamlit
+            if original_llm is None:
+                sys.modules.pop("llm_advisor", None)
+            else:
+                sys.modules["llm_advisor"] = original_llm
 
     def test_debt_to_equity_threshold_expects_ratio_not_percent(self):
         scored = score_company(
