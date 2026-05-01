@@ -282,6 +282,19 @@ def _fetch_batch_ibkr(tickers: list[str]) -> Optional[list[dict]]:
         return None
 
 
+def _normalize_debt_to_equity(value) -> Optional[float]:
+    """Normalize debt/equity values to ratio units.
+
+    yfinance usually reports percent values (75 = 0.75), while IBKR may report
+    either percent or ratio depending on the feed. Use the same defensive
+    heuristic for both paths.
+    """
+    if value is None:
+        return None
+    val = float(value)
+    return round(val / 100, 2) if val > 1 else round(val, 2)
+
+
 def _parse_ibkr_fundamentals(xml_data: str) -> dict:
     """Parse IBKR fundamental data XML into our dict format."""
     # IBKR returns XML — basic parsing for key metrics
@@ -304,7 +317,7 @@ def _parse_ibkr_fundamentals(xml_data: str) -> dict:
             if key == "gross_margin":
                 result["gross_margin"] = round(val / 100, 3) if val > 1 else round(val, 3)
             elif key == "debt_to_equity":
-                result["debt_to_equity"] = round(val / 100, 2) if val > 1 else round(val, 2)
+                result["debt_to_equity"] = _normalize_debt_to_equity(val)
             elif key == "revenue_growth":
                 result["revenue_growth_3y"] = round(val, 3)
     
@@ -381,7 +394,7 @@ def _fetch_from_yfinance(ticker: str) -> Optional[dict]:
             "gross_margin": round(info.get("grossMargins", 0) or 0, 3) if info.get("grossMargins") else None,
             "fcf_margin": None,
             "fcf_yield": None,
-            "debt_to_equity": round((info.get("debtToEquity", 0) or 0) / 100, 2) if info.get("debtToEquity") else None,
+            "debt_to_equity": _normalize_debt_to_equity(info.get("debtToEquity")),
             "revenue_growth_3y": round(info.get("revenueGrowth", 0) or 0, 3) if info.get("revenueGrowth") else None,
             "revenue_volatility": None,
         }

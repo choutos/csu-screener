@@ -1,5 +1,4 @@
 import importlib.util
-import os
 import sqlite3
 import sys
 import tempfile
@@ -7,11 +6,9 @@ import types
 import unittest
 from pathlib import Path
 
-os.environ["CSU_DB_PATH"] = str(Path(tempfile.mkdtemp()) / "invest.db")
-
 import db
 from fetcher import score_company
-from smart_fetcher import _parse_ibkr_fundamentals, calculate_buy_under
+from smart_fetcher import _normalize_debt_to_equity, _parse_ibkr_fundamentals, calculate_buy_under
 
 
 class CoreFixTests(unittest.TestCase):
@@ -144,7 +141,7 @@ class CoreFixTests(unittest.TestCase):
                     conn.close()
                     tmp.close()
 
-    def test_init_db_migrates_revenue_and_legacy_debt_to_equity(self):
+    def test_init_db_migrates_revenue_and_legacy_debt_to_equity_once(self):
         original_db_path = db.DB_PATH
         with tempfile.TemporaryDirectory() as tmpdir:
             db.DB_PATH = Path(tmpdir) / "legacy.db"
@@ -181,6 +178,26 @@ class CoreFixTests(unittest.TestCase):
 
                 self.assertIn("total_revenue_m", columns)
                 self.assertEqual(row, (0.75, None))
+
+                high_ratio_conn = sqlite3.connect(db.DB_PATH)
+                try:
+                    high_ratio_conn.execute(
+                        "UPDATE scan_results SET debt_to_equity=? WHERE ticker=?",
+                        (8.0, "OLD"),
+                    )
+                    high_ratio_conn.commit()
+                finally:
+                    high_ratio_conn.close()
+
+                db.init_db()
+                remigrated = sqlite3.connect(db.DB_PATH)
+                try:
+                    row = remigrated.execute(
+                        "SELECT debt_to_equity FROM scan_results WHERE ticker='OLD'"
+                    ).fetchone()
+                finally:
+                    remigrated.close()
+                self.assertEqual(row, (8.0,))
             finally:
                 db.DB_PATH = original_db_path
 
@@ -218,6 +235,11 @@ class CoreFixTests(unittest.TestCase):
                 sys.modules.pop("llm_advisor", None)
             else:
                 sys.modules["llm_advisor"] = original_llm
+
+    def test_debt_to_equity_normalizer_accepts_percent_or_ratio(self):
+        self.assertEqual(_normalize_debt_to_equity(75), 0.75)
+        self.assertEqual(_normalize_debt_to_equity(0.75), 0.75)
+        self.assertIsNone(_normalize_debt_to_equity(None))
 
     def test_ibkr_debt_to_equity_is_normalized_like_yfinance(self):
         percent_result = _parse_ibkr_fundamentals("<DebtToEquity>75</DebtToEquity>")

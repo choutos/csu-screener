@@ -126,7 +126,10 @@ def init_db():
         conn.execute("ALTER TABLE scan_results ADD COLUMN total_revenue_m REAL")
     except Exception:
         pass
-    conn.execute("UPDATE scan_results SET debt_to_equity = debt_to_equity / 100 WHERE debt_to_equity > 5")
+    user_version = conn.execute("PRAGMA user_version").fetchone()[0]
+    if user_version < 1:
+        conn.execute("UPDATE scan_results SET debt_to_equity = debt_to_equity / 100 WHERE debt_to_equity > 5")
+        conn.execute("PRAGMA user_version = 1")
     conn.close()
 
 
