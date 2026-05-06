@@ -50,45 +50,55 @@ def save_config(cfg: dict) -> None:
 def _call_llm(system_prompt: str, user_prompt: str, config: dict = None) -> Optional[str]:
     """Call the LLM via OpenAI-compatible API. Returns the response text."""
     cfg = config or load_config()
-    
+
     try:
         from openai import OpenAI
     except ImportError:
         logger.error("openai package not installed. Run: pip install openai")
         return None
-    
+
     base_url = cfg["base_url"].rstrip("/")
     api_key = cfg.get("api_key") or "ollama"  # ollama doesn't need a real key
-    
+
     client = OpenAI(base_url=base_url, api_key=api_key)
-    
-    try:
-        response = client.chat.completions.create(
-            model=cfg["model"],
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            temperature=0.3,
-            max_tokens=8000,
-        )
-        message = response.choices[0].message
-        content = (message.content or "").strip()
-        if not content:
+
+    # Reasoning models (e.g. kimi-k2.6:cloud) can burn the whole budget on
+    # internal thinking that Ollama doesn't surface back, returning empty
+    # content with finish_reason="length". Retry once with a larger budget.
+    attempts = [16000, 32000]
+    for attempt_idx, max_tokens in enumerate(attempts):
+        try:
+            response = client.chat.completions.create(
+                model=cfg["model"],
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=0.3,
+                max_tokens=max_tokens,
+            )
+            message = response.choices[0].message
+            content = (message.content or "").strip()
+            if content:
+                return content
+
             finish_reason = getattr(response.choices[0], "finish_reason", "?")
             thinking = getattr(message, "thinking", None) or getattr(message, "reasoning_content", None)
             thinking_len = len(thinking) if thinking else 0
             logger.warning(
                 "LLM returned empty content for model %s "
-                "(finish_reason=%s, thinking_len=%d). First 200 chars of thinking: %r",
-                cfg["model"], finish_reason, thinking_len,
+                "(finish_reason=%s, thinking_len=%d, max_tokens=%d, attempt=%d). "
+                "First 200 chars of thinking: %r",
+                cfg["model"], finish_reason, thinking_len, max_tokens, attempt_idx + 1,
                 (thinking[:200] if thinking else None),
             )
+            if finish_reason != "length" or attempt_idx == len(attempts) - 1:
+                return None
+            # else: fall through to retry with a larger budget
+        except Exception as e:
+            logger.error(f"LLM call failed: {e}")
             return None
-        return content
-    except Exception as e:
-        logger.error(f"LLM call failed: {e}")
-        return None
+    return None
 
 
 # ─── Prompts ──────────────────────────────────────────────────────────────────
