@@ -2,5 +2,10 @@ __pycache__/
 *.pyc
 .venv/
 invest.db
+invest.db-shm
+invest.db-wal
 fmp_api_key.txt
+llm_config.json
+data/*_tickers.json
+.claude/settings.local.json
 .DS_Store

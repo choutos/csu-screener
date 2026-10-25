@@ -1,5 +1,7 @@
 # CSU Screener — Investment Process App
 
+Licensed under the MIT License. See [LICENSE](LICENSE).
+
 A self-hosted investment tracking and screening tool built with Streamlit + SQLite. Designed for a disciplined, thesis-driven investment process focused on quality compounders and deep value opportunities.
 
 ## Quick Start
